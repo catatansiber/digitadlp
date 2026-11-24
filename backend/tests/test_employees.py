@@ -46,3 +46,41 @@ def test_from_xlsx(tmp_path):
     assert d.is_employee("bambang sutrisno")
     assert d.is_employee("Siti Aminah, S.Kom")
     assert not d.is_employee("Siti Rahmawati")
+
+
+def test_nip_from_xlsx(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["NAMA", "Nip"])
+    ws.append(["Siti Aminah", "1990 0101 2015 01 2002"])
+    ws.append(["Budi", None])
+    p = tmp_path / "p.xlsx"
+    wb.save(p)
+    d = EmployeeDirectory.from_xlsx(p)
+    assert d.is_employee_nip("199001012015012002")
+    assert d.is_employee_nip("19900101 201501 2002")
+    assert not d.is_employee_nip("199001012015012003")
+    assert not d.is_employee_nip("")
+    assert not d.is_employee_nip("abc")
+
+
+def test_middle_initial_kept():
+    d = EmployeeDirectory.from_names(["Siti H Rahmawati"])
+    assert d.is_employee("Hj. Siti H Rahmawati")
+    assert not d.is_employee("Siti Rahmawati")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Bambang Sutrisno SH",
+        "Bambang Sutrisno, ST, MT",
+        "Bambang Sutrisno SE",
+        "Bambang Sutrisno, S. Kom",
+        "Bambang Sutrisno, S.Pd.I",
+        "Bambang Sutrisno, M.Pd.I",
+        "Bambang Sutrisno, S.Pd.I., M.Pd.I.",
+    ],
+)
+def test_more_trailing_titles(name):
+    assert EmployeeDirectory.from_names(["Bambang Sutrisno"]).is_employee(name)
