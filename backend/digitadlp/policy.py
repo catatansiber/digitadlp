@@ -7,6 +7,7 @@ from .models import Action, Finding, Kind, Label, Strength, Version
 _DIGIT_KINDS = frozenset(
     {Kind.NIK, Kind.KK, Kind.ACCOUNT, Kind.NPWP, Kind.NIP, Kind.PHONE}
 )
+_DIGIT = re.compile(r"[0-9]")
 _ADDRESS_STOP = frozenset({"RT", "RW", "NO", "NO."})
 
 _PLACEHOLDERS = {
@@ -48,21 +49,18 @@ def placeholder(kind: Kind) -> str:
 
 
 def _mask_digits(text: str) -> str:
-    total = sum(c.isdigit() for c in text)
-    if total <= 8:
-        keep_head, keep_tail = 0, min(2, total) if total > 2 else 0
-    else:
-        keep_head, keep_tail = 4, 4
-    out = []
+    total = len(_DIGIT.findall(text))
+    if total == 0:
+        return "***"
+    keep_head, keep_tail = (4, 4) if total > 8 else (0, 2 if total > 2 else 0)
     seen = 0
-    for c in text:
-        if c.isdigit():
-            seen += 1
-            keep = seen <= keep_head or seen > total - keep_tail
-            out.append(c if keep else "*")
-        else:
-            out.append(c)
-    return "".join(out)
+
+    def repl(m: re.Match) -> str:
+        nonlocal seen
+        seen += 1
+        return m.group() if seen <= keep_head or seen > total - keep_tail else "*"
+
+    return _DIGIT.sub(repl, text)
 
 
 def _mask_word(w: str) -> str:
@@ -72,13 +70,16 @@ def _mask_word(w: str) -> str:
 
 
 def _mask_name(text: str) -> str:
-    return re.sub(r"\S+", lambda m: _mask_word(m.group()), text)
+    out = re.sub(r"\S+", lambda m: _mask_word(m.group()), text)
+    if out == text:
+        out = re.sub(r"\S+", lambda m: m.group()[0] + "*" * (len(m.group()) - 1), text)
+    return out
 
 
 def _mask_address(text: str) -> str:
     kept = []
     for tok in text.split():
-        if tok.upper() in _ADDRESS_STOP or any(c.isdigit() for c in tok):
+        if tok.upper() in _ADDRESS_STOP or _DIGIT.search(tok):
             break
         kept.append(tok)
     return " ".join(kept + ["***"])
@@ -96,7 +97,7 @@ def mask_value(f: Finding) -> str:
     if kind in _DIGIT_KINDS:
         return _mask_digits(f.text)
     if kind == Kind.BIRTHDATE:
-        return re.sub(r"\d", "*", f.text)
+        return _DIGIT.sub("*", f.text)
     if kind == Kind.ADDRESS:
         return _mask_address(f.text)
     if kind == Kind.EMAIL:

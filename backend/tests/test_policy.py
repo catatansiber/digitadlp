@@ -49,7 +49,17 @@ def test_mask_name():
 
 
 def test_mask_name_short_words_kept():
-    assert mask_value(F(Kind.NAME_CITIZEN, "Budi")) == "Budi"
+    assert mask_value(F(Kind.NAME_CITIZEN, "Budi")) == "B***"
+    assert mask_value(F(Kind.NAME_CITIZEN, "Ani")) == "A**"
+    assert mask_value(F(Kind.NAME_CITIZEN, "Budi Ani")) == "B*** A**"
+
+
+def test_mask_digit_kind_without_digits():
+    assert mask_value(F(Kind.NIK, "bukan angka")) == "***"
+
+
+def test_mask_ignores_non_ascii_digits():
+    assert mask_value(F(Kind.NIK, "\u0663\u0664" + "6474011203900002")) == "\u0663\u0664" + "6474********0002"
 
 
 def test_mask_birthdate():
@@ -84,6 +94,8 @@ SAMPLES = [
     F(Kind.ADDRESS, "Jl. Merdeka No. 12 RT 05"),
     F(Kind.ADDRESS, "Jl. Merdeka Bontang"),
     F(Kind.BIRTHDATE, "12 Maret 1990"),
+    F(Kind.NAME_CITIZEN, "Budi"),
+    F(Kind.NAME_CITIZEN, "Ani"),
     F(Kind.NIK, "NIK: 6474011203900002 a.n."),
 ]
 
