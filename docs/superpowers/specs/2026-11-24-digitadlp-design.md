@@ -63,7 +63,7 @@ Dipilih **A** oleh pengguna. C bisa ditambah nanti jika ada GPU.
 - **Sensor sungguhan**: teks dihapus dari file (PyMuPDF redaction untuk PDF, ganti teks untuk DOCX), metadata dibersihkan.
 - **Cara sensor**: ganti dengan blok hitam atau penanda seperti `[NIK]`. Penyamaran sebagian (contoh `3201********0001`) untuk versi Internal.
 - **Peran**: Pengunggah, Pemeriksa (menyetujui rilis), Admin (atur aturan dan pengguna).
-- **Teknologi**: Python + FastAPI (backend), web UI sederhana, PostgreSQL (metadata + audit), penyimpanan file lokal terenkripsi.
+- **Teknologi** (dipilih pengguna, opsi 1): Python + FastAPI (backend), React (frontend), PostgreSQL (metadata + audit), penyimpanan file lokal terenkripsi.
 - **Layar cek**: dokumen tampil dengan sorotan tiap temuan. Pemeriksa bisa tambah, hapus, atau ubah temuan sebelum setuju.
 
 ## Keputusan saya dari cek pembangun (bisa dikoreksi)
