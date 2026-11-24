@@ -70,3 +70,20 @@ def test_is_valid_nik():
     assert not is_valid_nik("6474015213880002")  # bulan 13
     assert not is_valid_nik("6474015203880000")  # urut 0000
     assert not is_valid_nik("64740152038800a2")
+
+
+def test_nik_after_space_separated_group():
+    text = "Tgl 15 2024 6474 0152 0388 0002"
+    f = find_patterns(text)
+    assert [(x.kind, x.text) for x in f] == [(Kind.NIK, "6474 0152 0388 0002")]
+    assert text[f[0].start:f[0].end] == "6474 0152 0388 0002"
+
+
+def test_email_with_phone_like_local_part():
+    f = find_patterns("kirim ke 081255440921@gmail.com")
+    assert [(x.kind, x.text) for x in f] == [(Kind.EMAIL, "081255440921@gmail.com")]
+
+
+def test_nip_without_separator():
+    f = find_patterns("NIP197004121998031005")
+    assert [(x.kind, x.text) for x in f] == [(Kind.NIP, "197004121998031005")]
