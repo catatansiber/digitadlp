@@ -5,7 +5,7 @@ import { Button } from "./Button";
 
 const TABS: { to: string; label: string; roles: Role[]; end?: boolean }[] = [
   { to: "/", label: "Beranda", roles: ["pengunggah", "pemeriksa", "admin"], end: true },
-  { to: "/upload", label: "Unggah", roles: ["pengunggah"] },
+  { to: "/upload", label: "Unggah", roles: ["pengunggah", "pemeriksa"] },
   { to: "/admin/pengguna", label: "Admin", roles: ["admin"] },
 ];
 

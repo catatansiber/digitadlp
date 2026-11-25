@@ -6,6 +6,8 @@ import { RequireAuth } from "./auth/RequireAuth";
 import { RequireRole } from "./auth/RequireRole";
 import { Layout } from "./components/Layout";
 import { Login } from "./pages/Login";
+import { Dashboard } from "./pages/Dashboard";
+import { Upload } from "./pages/Upload";
 import { Placeholder } from "./pages/Placeholder";
 
 function on401(err: unknown) {
@@ -39,12 +41,12 @@ export function AppRoutes() {
           </RequireAuth>
         }
       >
-        <Route index element={<Placeholder title="Beranda" />} />
+        <Route index element={<Dashboard />} />
         <Route
           path="upload"
           element={
-            <RequireRole roles={["pengunggah"]}>
-              <Placeholder title="Unggah dokumen" />
+            <RequireRole roles={["pengunggah", "pemeriksa"]}>
+              <Upload />
             </RequireRole>
           }
         />

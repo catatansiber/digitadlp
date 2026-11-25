@@ -7,3 +7,16 @@ export type Me = {
   role: Role;
   unit: string;
 };
+
+/** Satu baris GET /api/documents. */
+export type DocSummary = {
+  id: string;
+  title: string;
+  ext: string;
+  status: import("../lib/labels").StatusValue;
+  label: string | null;
+  suggested_label: string | null;
+  owner_name: string | null;
+  unit_name: string | null;
+  created_at: string | null;
+};
