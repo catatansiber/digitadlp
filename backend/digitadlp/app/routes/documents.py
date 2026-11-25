@@ -108,8 +108,8 @@ def download_version(doc_id: str, version: str, request: Request,
     if not can_download(user, doc, version):
         record(db, user, "akses_ditolak", doc, detail=f"versi={version}")
         db.commit()
-        # Dokumen dirilis diketahui publik (versi Publik terbuka), jadi 403 tidak membocorkan apa pun.
-        if not can_view(user, doc) and doc.status != Status.DIRILIS:
+        # 404 hanya bila pengguna tidak bisa melihat dokumen dan tidak punya versi apa pun.
+        if not can_view(user, doc) and not any(can_download(user, doc, v) for v in VERSIONS):
             raise HTTPException(404, MSG_NOT_FOUND)
         raise HTTPException(403, MSG_DENIED)
     store = request.app.state.store
@@ -117,7 +117,7 @@ def download_version(doc_id: str, version: str, request: Request,
         data = store.get(doc.id, f"{version}.{doc.ext}")
     except StoreError:
         raise HTTPException(404, "Versi belum tersedia.") from None
-    record(db, user, "unduh", doc, detail=version)
+    record(db, user, "unduh", doc, detail=f"versi={version}")
     db.commit()
     return Response(
         data, media_type=MIME.get(doc.ext, "application/octet-stream"),

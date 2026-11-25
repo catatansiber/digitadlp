@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy import select
 
 from digitadlp.app.access import can_download
-from digitadlp.app.models import AuditEvent, Document, Role, Status
+from digitadlp.app.models import AuditEvent, Document, Role, Status, User
 
 from .test_workflow import (  # noqa: F401  (fixtures)
     _ready, _upload, client_as, wapp, work,
@@ -23,14 +23,13 @@ def _prep(client_as, work, make_pdf, wapp, status):
 
 # (actor, expected per version) for each status; unit of doc = Unit A, owner = pengunggah
 def _expect(actor, status, version):
-    ready = True  # both disetujui & dirilis
     rel = status == "dirilis"
     same = actor in ("owner", "unit_mate", "admin_same")
     rev = actor == "pemeriksa"
     if version == "publik":
         return rel or (same or rev)
     if version == "internal":
-        return ready
+        return True
     return same or rev
 
 
@@ -50,13 +49,9 @@ def test_matrix(client_as, work, make_pdf, wapp, actor, version, status):
     }[actor]
     c = c() if callable(c) and not hasattr(c, "get") else c
     r = c.get(f"/documents/{doc_id}/versions/{version}")
-    if _expect(actor, status, version):
-        assert r.status_code == 200, r.text
-    else:
-        # cannot view at all -> 404, otherwise 403
-        assert r.status_code in (403, 404)
-        if actor in ("other_up", "admin_other"):
-            assert r.status_code == (403 if status == "dirilis" else 404) or r.status_code == 404
+    # internal is downloadable for everyone at these statuses, so a denial is never 404
+    want = 200 if _expect(actor, status, version) else 403
+    assert r.status_code == want, (actor, version, status, r.text)
 
 
 def test_not_ready_status_denied(client_as, work, make_pdf, wapp):
@@ -65,18 +60,33 @@ def test_not_ready_status_denied(client_as, work, make_pdf, wapp):
     assert r.status_code == 403
 
 
-def test_cannot_view_404_and_audited(client_as, work, make_pdf, wapp):
-    up, rev, doc_id = _prep(client_as, work, make_pdf, wapp, "disetujui")
+def test_other_unit_disetujui_is_403(client_as, work, make_pdf, wapp):
+    _up, _rev, doc_id = _prep(client_as, work, make_pdf, wapp, "disetujui")
     other = client_as("pengunggah", unit="Unit C")
-    r = other.get(f"/documents/{doc_id}/versions/publik")
-    assert r.status_code == 404
+    assert other.get(f"/documents/{doc_id}/versions/publik").status_code == 403
+    assert other.get(f"/documents/{doc_id}/versions/internal").status_code == 200
+
+
+def test_non_viewer_404_and_audited(client_as, work, make_pdf, wapp):
+    up, doc_id = _ready(client_as, work, make_pdf)  # menunggu_cek
+    other = client_as("pengunggah", unit="Unit C")
+    assert other.get(f"/documents/{doc_id}/versions/publik").status_code == 404
     with wapp.state.session_factory() as db:
         ev = db.scalars(select(AuditEvent).where(AuditEvent.action == "akses_ditolak")).all()
-    assert len(ev) == 1 and ev[0].document_id == doc_id
+    assert len(ev) == 1 and ev[0].document_id == doc_id and ev[0].detail == "versi=publik"
+
+
+def test_inactive_user_401(client_as, work, make_pdf, wapp):
+    up, _rev, doc_id = _prep(client_as, work, make_pdf, wapp, "dirilis")
+    with wapp.state.session_factory() as db:
+        for u in db.scalars(select(User).where(User.id == db.get(Document, doc_id).owner_id)):
+            u.active = False
+        db.commit()
+    assert up.get(f"/documents/{doc_id}/versions/publik").status_code == 401
 
 
 def test_denied_is_audited(client_as, work, make_pdf, wapp):
-    up, rev, doc_id = _prep(client_as, work, make_pdf, wapp, "dirilis")
+    _up, _rev, doc_id = _prep(client_as, work, make_pdf, wapp, "dirilis")
     other = client_as("pengunggah", unit="Unit C")
     r = other.get(f"/documents/{doc_id}/versions/rahasia")
     assert r.status_code == 403 and r.json()["detail"] == "Anda tidak punya akses ke versi ini."
@@ -86,7 +96,7 @@ def test_denied_is_audited(client_as, work, make_pdf, wapp):
 
 
 def test_download_audited_and_headers(client_as, work, make_pdf, wapp):
-    up, rev, doc_id = _prep(client_as, work, make_pdf, wapp, "dirilis")
+    up, _rev, doc_id = _prep(client_as, work, make_pdf, wapp, "dirilis")
     r = up.get(f"/documents/{doc_id}/versions/rahasia")
     assert r.status_code == 200
     assert r.headers["cache-control"] == "no-store"
@@ -96,18 +106,18 @@ def test_download_audited_and_headers(client_as, work, make_pdf, wapp):
     assert r.content.startswith(b"%PDF")
     with wapp.state.session_factory() as db:
         ev = db.scalars(select(AuditEvent).where(AuditEvent.action == "unduh")).all()
-    assert len(ev) == 1 and ev[0].detail == "rahasia" and ev[0].document_id == doc_id
+    assert len(ev) == 1 and ev[0].detail == "versi=rahasia" and ev[0].document_id == doc_id
 
 
 def test_admin_other_unit_rahasia_403(client_as, work, make_pdf, wapp):
-    up, rev, doc_id = _prep(client_as, work, make_pdf, wapp, "dirilis")
+    _up, _rev, doc_id = _prep(client_as, work, make_pdf, wapp, "dirilis")
     adm = client_as("admin", unit="Unit C")
     assert adm.get(f"/documents/{doc_id}/versions/publik").status_code == 200
     assert adm.get(f"/documents/{doc_id}/versions/rahasia").status_code == 403
 
 
 def test_unknown_version_and_missing_file(client_as, work, make_pdf, wapp):
-    up, rev, doc_id = _prep(client_as, work, make_pdf, wapp, "dirilis")
+    up, _rev, doc_id = _prep(client_as, work, make_pdf, wapp, "dirilis")
     assert up.get(f"/documents/{doc_id}/versions/xyz").status_code == 404
     assert up.get("/documents/nonexistent/versions/publik").status_code == 404
     wapp.state.store.delete_versions(doc_id)
