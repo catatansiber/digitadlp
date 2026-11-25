@@ -50,3 +50,10 @@ test("no localStorage writes", async () => {
   expect(spy).not.toHaveBeenCalled();
   spy.mockRestore();
 });
+
+test("valid kembali is honoured after login", async () => {
+  server.use(http.post("/api/auth/login", () => HttpResponse.json(uploader)));
+  renderApp("/masuk?kembali=%2Fdokumen%2F42%2Fversi");
+  await fill();
+  expect(await screen.findByRole("heading", { name: "Versi dokumen" })).toBeInTheDocument();
+});

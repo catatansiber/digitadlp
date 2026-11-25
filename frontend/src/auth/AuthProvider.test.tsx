@@ -12,6 +12,7 @@ import { makeQueryClient } from "../App";
 import { AuthProvider } from "./AuthProvider";
 import { api } from "../api/client";
 import { Login } from "../pages/Login";
+import { emitSessionExpired } from "./sessionEvents";
 
 function Probe() {
   const q = useQuery({ queryKey: ["probe"], queryFn: () => api("/probe") });
@@ -83,4 +84,38 @@ test("logout returns to login", async () => {
   await userEvent.setup().click(await screen.findByRole("button", { name: "Keluar" }));
   expect(await screen.findByLabelText("Nama pengguna")).toBeInTheDocument();
   expect(loggedOut).toBe(true);
+});
+
+test("401 mid-session through real App shows expired message on /masuk", async () => {
+  server.use(
+    meAs(uploader),
+    http.post("/api/auth/logout", () => HttpResponse.json({ ok: true })),
+  );
+  renderApp("/dokumen/9#temuan");
+  await screen.findByRole("heading", { name: "Cek temuan" });
+  emitSessionExpired();
+  expect(await screen.findByRole("status")).toHaveTextContent("Sesi berakhir. Silakan masuk lagi.");
+  expect(screen.getByLabelText("Nama pengguna")).toBeInTheDocument();
+});
+
+test("401 return path keeps hash", async () => {
+  server.use(
+    meAs(uploader),
+    http.get("/api/probe", () => HttpResponse.json({ detail: "x" }, { status: 401 })),
+  );
+  render(
+    <QueryClientProvider client={makeQueryClient()}>
+      <MemoryRouter initialEntries={["/dokumen/7?a=1#h"]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/dokumen/:id" element={<Probe />} />
+            <Route path="/masuk" element={<Where />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByTestId("loc")).toHaveTextContent(
+    "/masuk?kembali=" + encodeURIComponent("/dokumen/7?a=1#h"),
+  );
 });

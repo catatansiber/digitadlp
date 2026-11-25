@@ -7,7 +7,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   const loc = useLocation();
   if (loading) return <p className="loading">Memuat…</p>;
   if (!user) {
-    return <Navigate to={`/masuk?kembali=${encodeURIComponent(loc.pathname + loc.search)}`} replace />;
+    return <Navigate to={`/masuk?kembali=${encodeURIComponent(loc.pathname + loc.search + loc.hash)}`} replace />;
   }
   return <>{children}</>;
 }

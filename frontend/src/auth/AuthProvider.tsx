@@ -34,7 +34,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const here = location.pathname + location.search;
+  const here = location.pathname + location.search + location.hash;
   useEffect(
     () =>
       onSessionExpired(() => {

@@ -4,8 +4,18 @@ import { ApiError, FALLBACK_MESSAGE } from "../api/client";
 import { SESSION_EXPIRED, useAuth } from "../auth/AuthProvider";
 import { Button } from "../components/Button";
 
-function safeReturn(v: string | null): string {
-  return v && v.startsWith("/") && !v.startsWith("//") && !v.startsWith("/masuk") ? v : "/";
+export function safeReturn(v: string | null): string {
+  if (!v || !v.startsWith("/") || /[\\\s\u0000-\u001f\u007f]/.test(v)) return "/";
+  let u: URL;
+  try {
+    u = new URL(v, window.location.origin);
+  } catch {
+    return "/";
+  }
+  if (u.origin !== window.location.origin || !u.pathname.startsWith("/") || u.pathname.startsWith("/masuk")) {
+    return "/";
+  }
+  return u.pathname + u.search + u.hash;
 }
 
 export function Login() {
