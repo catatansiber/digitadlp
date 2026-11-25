@@ -98,15 +98,11 @@ def test_bad_version_404_and_missing_version_404(client, make_pdf):
     assert client.get(f"/documents/{doc_id}/versions/source").status_code == 404
 
 
-def test_too_large_413(storage):
-    app = create_app(FakeNer({}), EmployeeDirectory.from_names([]), storage)
+def test_too_large_413(storage, monkeypatch):
     import digitadlp.api as api
-    old = api.MAX_UPLOAD_BYTES
-    api.MAX_UPLOAD_BYTES = 1000
-    try:
-        r = TestClient(app).post("/documents", files={"file": ("a.pdf", b"x" * 2000, PDF)})
-    finally:
-        api.MAX_UPLOAD_BYTES = old
+    monkeypatch.setattr(api, "MAX_UPLOAD_BYTES", 1000)
+    app = create_app(FakeNer({}), EmployeeDirectory.from_names([]), storage)
+    r = TestClient(app).post("/documents", files={"file": ("a.pdf", b"x" * 2000, PDF)})
     assert r.status_code == 413
     assert not storage.exists() or not any(storage.iterdir())
 

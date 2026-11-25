@@ -3,6 +3,7 @@
 import re
 import shutil
 import tempfile
+import threading
 import uuid
 from pathlib import Path
 
@@ -27,6 +28,12 @@ _ID = re.compile(r"^[0-9a-f]{32}$")
 def create_app(ner: NerDetector, directory: EmployeeDirectory, storage: Path) -> FastAPI:
     app = FastAPI(title="DigitaDLP")
     storage = Path(storage)
+    locks: dict[str, threading.Lock] = {}
+    locks_guard = threading.Lock()
+
+    def lock_for(doc_id: str) -> threading.Lock:
+        with locks_guard:
+            return locks.setdefault(doc_id, threading.Lock())
 
     def doc_dir(doc_id: str) -> Path:
         if not _ID.fullmatch(doc_id):
@@ -49,11 +56,11 @@ def create_app(ner: NerDetector, directory: EmployeeDirectory, storage: Path) ->
         return [detect(t, ner, directory) for t in pages]
 
     @app.post("/documents", status_code=201)
-    async def upload(file: UploadFile = File(...)):
+    def upload(file: UploadFile = File(...)):
         ext = Path(file.filename or "").suffix.lower()
         if ext not in ALLOWED_EXT:
             raise HTTPException(415, "Hanya file PDF atau DOCX yang didukung.")
-        data = await file.read(MAX_UPLOAD_BYTES + 1)
+        data = file.file.read(MAX_UPLOAD_BYTES + 1)
         if len(data) > MAX_UPLOAD_BYTES:
             raise HTTPException(413, "Ukuran file melebihi batas 50 MB.")
         doc_id = uuid.uuid4().hex
@@ -84,21 +91,22 @@ def create_app(ner: NerDetector, directory: EmployeeDirectory, storage: Path) ->
         d = doc_dir(doc_id)
         src = source_of(d)
         ext = src.suffix
-        tmp = Path(tempfile.mkdtemp(prefix=".tmp-", dir=d))
-        try:
-            per_page = run_detect(d)
-            for v in VERSIONS:
-                dst = tmp / f"{v}{ext}"
-                if ext == ".pdf":
-                    redact_pdf(src, dst, per_page, Version(v))
-                else:
-                    redact_docx(src, dst, lambda t: detect(t, ner, directory), Version(v))
-            for v in VERSIONS:
-                (tmp / f"{v}{ext}").replace(d / f"{v}{ext}")
-        except DocumentError:
-            raise HTTPException(422, DOC_ERROR) from None
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+        with lock_for(doc_id):
+            tmp = Path(tempfile.mkdtemp(prefix=".tmp-", dir=d))
+            try:
+                per_page = run_detect(d) if ext == ".pdf" else []
+                for v in VERSIONS:
+                    dst = tmp / f"{v}{ext}"
+                    if ext == ".pdf":
+                        redact_pdf(src, dst, per_page, Version(v))
+                    else:
+                        redact_docx(src, dst, lambda t: detect(t, ner, directory), Version(v))
+                for v in VERSIONS:
+                    (tmp / f"{v}{ext}").replace(d / f"{v}{ext}")
+            except DocumentError:
+                raise HTTPException(422, DOC_ERROR) from None
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
         return {"versions": list(VERSIONS)}
 
     @app.get("/documents/{doc_id}/versions/{version}")
