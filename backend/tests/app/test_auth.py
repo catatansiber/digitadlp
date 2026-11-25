@@ -253,3 +253,24 @@ def test_create_session_requires_hours(app_db):
     u = make_user(app_db, "budi")
     with pytest.raises(TypeError):
         create_session(app_db, u)
+
+
+def test_login_logout_audited(client, app_db):
+    from sqlalchemy import select as _s
+    from digitadlp.app.models import AuditEvent
+    from .conftest import make_user as _mk
+    u = _mk(app_db, "audituser")
+    client.post("/auth/login", json={"username": "audituser", "password": "salah-sekali"})
+    client.post("/auth/login", json={"username": "audituser", "password": "rahasia123"})
+    client.post("/auth/logout")
+    for _ in range(6):
+        client.post("/auth/login", json={"username": "audituser", "password": "x"})
+    app_db.expire_all()
+    ev = list(app_db.scalars(_s(AuditEvent).order_by(AuditEvent.at)))
+    acts = [e.action for e in ev]
+    assert acts[:3] == ["gagal_masuk", "masuk", "keluar"]
+    assert ev[1].actor_id == u.id and ev[2].actor_id == u.id
+    fails = [e for e in ev if e.action == "gagal_masuk"]
+    assert all(e.actor_id is None for e in fails)
+    assert fails[0].detail == "" and fails[-1].detail == "terkunci"
+    assert all("audituser" not in e.detail and "salah" not in e.detail for e in ev)

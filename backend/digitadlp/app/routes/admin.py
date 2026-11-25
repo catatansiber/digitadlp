@@ -13,7 +13,7 @@ from ...policy import default_label_for
 from ..audit import record
 from ..models import AuditEvent, AuthSession, LabelRule, Role, Unit, User
 from ..processing import label_rules
-from ..security import get_db, hash_password, require_role
+from ..security import COOKIE_NAME, _digest, get_db, hash_password, require_role
 
 router = APIRouter(prefix="/admin", tags=["admin"],
                    dependencies=[Depends(require_role(Role.ADMIN))])
@@ -139,7 +139,7 @@ def create_user(body: UserIn, actor: User = Depends(admin_user), db: Session = D
 
 
 @router.patch("/users/{user_id}")
-def patch_user(user_id: str, body: UserPatch, actor: User = Depends(admin_user),
+def patch_user(user_id: str, body: UserPatch, request: Request, actor: User = Depends(admin_user),
                db: Session = Depends(get_db)):
     user = db.get(User, user_id)
     if user is None:
@@ -151,14 +151,17 @@ def patch_user(user_id: str, body: UserPatch, actor: User = Depends(admin_user),
     kill_sessions = False
     if body.role is not None and body.role != user.role:
         user.role = body.role
+        kill_sessions = True
         changed.append(f"role={body.role.value}")
     if body.unit_id is not None and body.unit_id != user.unit_id:
         _unit(db, body.unit_id)
         user.unit_id = body.unit_id
         changed.append(f"unit={body.unit_id}")
     if body.full_name is not None:
-        user.full_name = body.full_name.strip() or user.full_name
-        changed.append("nama")
+        new_name = body.full_name.strip() or user.full_name
+        if new_name != user.full_name:
+            user.full_name = new_name
+            changed.append("nama")
     if body.password is not None:
         _check_password(body.password)
         user.password_hash = hash_password(body.password)
@@ -168,8 +171,11 @@ def patch_user(user_id: str, body: UserPatch, actor: User = Depends(admin_user),
         user.active = body.active
         kill_sessions = kill_sessions or not body.active
         changed.append(f"active={int(body.active)}")
-    if kill_sessions and user.id != actor.id:
-        db.execute(delete(AuthSession).where(AuthSession.user_id == user.id))
+    if kill_sessions:
+        q = delete(AuthSession).where(AuthSession.user_id == user.id)
+        if user.id == actor.id:  # reset sandi sendiri: sesi saat ini tetap
+            q = q.where(AuthSession.token_hash != _digest(request.cookies.get(COOKIE_NAME, "")))
+        db.execute(q)
     _audit(db, actor, "user_diubah", f"user={user.id} " + " ".join(changed))
     db.commit()
     db.refresh(user)

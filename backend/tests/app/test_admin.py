@@ -249,7 +249,42 @@ def test_audit_list(admin, aapp, login, make_pdf):
     assert [e["action"] for e in ev] == ["deteksi_selesai", "upload"]  # terbaru dulu
     assert set(ev[0]) >= {"id", "at", "actor_id", "action", "document_id", "detail"}
     r = admin.get("/admin/audit", params={"actor_id": up_id})
-    assert {e["action"] for e in r.json()} == {"upload"}
+    assert {e["action"] for e in r.json()} == {"masuk", "upload"}
     assert len(admin.get("/admin/audit", params={"limit": 1}).json()) == 1
     assert admin.get("/admin/audit", params={"limit": 501}).status_code == 422
     assert admin.get("/admin/audit", params={"limit": 0}).status_code == 422
+
+
+def _sessions(aapp, uid):
+    with aapp.state.session_factory() as db:
+        return db.scalars(select(AuthSession).where(AuthSession.user_id == uid)).all()
+
+
+def test_password_reset_and_role_change_kill_target_sessions(admin, aapp, login):
+    with aapp.state.session_factory() as db:
+        uid = make_user(db, "siti").id
+    c = login("siti")
+    admin.patch(f"/admin/users/{uid}", json={"password": "SandiBaru12345"})
+    assert _sessions(aapp, uid) == [] and c.get("/auth/me").status_code == 401
+    c = login("siti", "SandiBaru12345")
+    admin.patch(f"/admin/users/{uid}", json={"role": "pemeriksa"})
+    assert _sessions(aapp, uid) == [] and c.get("/auth/me").status_code == 401
+
+
+def test_admin_self_password_reset_keeps_current_session(admin, aapp, login):
+    other = login("admin")
+    me = admin.get("/auth/me").json()["id"]
+    assert len(_sessions(aapp, me)) == 2
+    r = admin.patch(f"/admin/users/{me}", json={"password": "AdminBaru12345"})
+    assert r.status_code == 200
+    assert admin.get("/auth/me").status_code == 200
+    assert other.get("/auth/me").status_code == 401
+    assert len(_sessions(aapp, me)) == 1
+
+
+def test_full_name_only_logged_when_changed(admin, aapp):
+    me = admin.get("/auth/me").json()
+    admin.patch(f"/admin/users/{me['id']}", json={"full_name": me["full_name"]})
+    with aapp.state.session_factory() as db:
+        ev = db.scalars(select(AuditEvent).where(AuditEvent.action == "user_diubah")).one()
+    assert "nama" not in ev.detail
