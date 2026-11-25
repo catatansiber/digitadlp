@@ -19,10 +19,10 @@ class Settings:
     run_worker: bool = True
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls, require_fernet: bool = True) -> "Settings":
         env = os.environ
-        key = env.get("DIGITADLP_FERNET_KEY")
-        if not key:
+        key = env.get("DIGITADLP_FERNET_KEY", "")
+        if not key and require_fernet:
             raise RuntimeError(
                 "DIGITADLP_FERNET_KEY wajib diisi (kunci Fernet untuk enkripsi file)."
             )
