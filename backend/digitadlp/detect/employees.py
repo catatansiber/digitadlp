@@ -60,7 +60,8 @@ class EmployeeDirectory:
         )
 
     @classmethod
-    def from_xlsx(cls, path: str | Path) -> "EmployeeDirectory":
+    def from_xlsx(cls, path) -> "EmployeeDirectory":
+        """`path`: path atau file-like (mis. BytesIO)."""
         wb = load_workbook(path, read_only=True, data_only=True)
         names: list[str] = []
         nips: list[str] = []
@@ -83,6 +84,14 @@ class EmployeeDirectory:
         finally:
             wb.close()
         return cls.from_names(names, nips)
+
+    @property
+    def name_count(self) -> int:
+        return len(self._names)
+
+    @property
+    def nip_count(self) -> int:
+        return len(self._nips)
 
     def is_employee(self, name: str) -> bool:
         n = normalize_name(name)
