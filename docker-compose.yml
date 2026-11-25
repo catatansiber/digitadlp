@@ -1,0 +1,42 @@
+# Jalankan:  cp .env.example .env   (lalu isi kata sandi)
+#            docker compose up -d --build
+# Buka:      http://localhost:8000
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: digitadlp
+      POSTGRES_USER: digitadlp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Isi POSTGRES_PASSWORD di .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U digitadlp -d digitadlp"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    image: digitadlp:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DIGITADLP_DATABASE_URL: postgresql+psycopg://digitadlp:${POSTGRES_PASSWORD}@db:5432/digitadlp
+      DIGITADLP_FERNET_KEY: ${DIGITADLP_FERNET_KEY:-}
+      DIGITADLP_COOKIE_SECURE: ${DIGITADLP_COOKIE_SECURE:-false}
+      DIGITADLP_ADMIN_USERNAME: ${DIGITADLP_ADMIN_USERNAME:-admin}
+      DIGITADLP_ADMIN_PASSWORD: ${DIGITADLP_ADMIN_PASSWORD:-}
+      DIGITADLP_ADMIN_UNIT: ${DIGITADLP_ADMIN_UNIT:-Admin Sistem}
+    volumes:
+      - app-data:/data
+    ports:
+      # Hanya bisa dibuka dari komputer ini. Ganti ke "8000:8000" untuk jaringan kantor (pakai HTTPS).
+      - "127.0.0.1:${DIGITADLP_PORT:-8000}:8000"
+
+volumes:
+  db-data:
+  app-data:

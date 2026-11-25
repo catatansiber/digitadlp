@@ -46,7 +46,9 @@ _AREA_CUE = re.compile(r"^\s*(kelurahan|kel|desa)(?![A-Za-z])", re.IGNORECASE)
 _AREA_NEAR = 3  # max gap (e.g. ", ") between a street address and its kelurahan/desa
 _HONORIFICS = frozenset(
     {"ibu", "bapak", "bpk", "bu", "pak", "sdr", "sdri", "saudara", "saudari",
-     "yth", "tuan", "nyonya", "ny", "nona", "almarhum", "alm", "almarhumah", "almh"}
+     "yth", "tuan", "nyonya", "ny", "nona", "almarhum", "alm", "almarhumah", "almh",
+     # form-field labels the model sometimes tags as names
+     "nik", "kk", "npwp", "nip", "rt", "rw", "hp", "no", "nomor", "telp", "email"}
 )
 
 

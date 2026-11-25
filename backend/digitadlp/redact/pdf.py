@@ -307,7 +307,13 @@ def _squash(s: str) -> str:
     return _WS.sub("", s)
 
 
+_PLACEHOLDERS = re.compile("|".join(re.escape(placeholder(k)) for k in Kind))
+
+
 def _leaks(text: str, targets: list[Finding]) -> list[str]:
+    # Our own placeholders (e.g. "[NIK]") are not leaks, even when a finding's
+    # text happens to equal the word inside one.
+    text = _PLACEHOLDERS.sub(" ", text)
     digits = _NON_DIGIT.sub("", text)
     hay = _squash(text).casefold()
     out = []

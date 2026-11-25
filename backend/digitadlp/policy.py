@@ -91,6 +91,10 @@ def _mask_address(text: str) -> str:
         if tok.upper() in _ADDRESS_STOP or _DIGIT.search(tok):
             break
         kept.append(tok)
+    else:
+        # no number/RT to cut at: keep only the first word, so the masked
+        # value never still contains the whole original address
+        kept = kept[:1]
     return " ".join(kept + ["***"])
 
 

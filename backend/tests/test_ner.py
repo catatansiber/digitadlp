@@ -120,3 +120,10 @@ def test_indobert_hard_cut_without_boundary():
     ner, calls = _stub(lambda c: [])
     ner.find(text)
     assert "".join(calls) == text and max(map(len, calls)) <= 1500
+
+
+def test_form_label_acronyms_not_names():
+    text = "NIK 6474 dan No. KK serta NPWP, RT, HP milik Siti"
+    out = _run(text, [("PER", "NIK"), ("PER", "KK"), ("PER", "NPWP"), ("PER", "RT"),
+                      ("PER", "HP"), ("PER", "Siti")])
+    assert out == [(Kind.NAME_CITIZEN, "Siti")]
