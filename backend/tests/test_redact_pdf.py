@@ -339,3 +339,19 @@ def test_ocr_errors_become_document_error(make_scanned_pdf, monkeypatch, exc):
     monkeypatch.setattr(pytesseract, "image_to_string", boom)
     with pytest.raises(DocumentError):
         extract_pdf_text(make_scanned_pdf(f"NIK {NIK}"))
+
+
+def test_internal_link_uri_with_nik_removed(make_pdf, tmp_path):
+    src = make_pdf("Hubungi kami di sini")
+    d = fitz.open(src)
+    d[0].insert_link({"kind": fitz.LINK_URI, "from": fitz.Rect(72, 60, 200, 75),
+                      "uri": f"mailto:{NIK}@contoh.go.id"})
+    tmp = tmp_path / "in.pdf"
+    d.save(tmp)
+    d.close()
+    out = tmp_path / "out.pdf"
+    redact_pdf(tmp, out, _findings(extract_pdf_text(tmp)), Version.INTERNAL)
+    r = fitz.open(out)
+    assert not r[0].get_links()
+    r.close()
+    assert NIK.encode() not in _all_bytes(out)

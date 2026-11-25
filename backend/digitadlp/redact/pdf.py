@@ -140,6 +140,8 @@ def _extra_texts(doc: fitz.Document) -> list[str]:
             out += [info.get(k, "") for k in ("content", "title", "subject")]
         for w in page.widgets() or []:
             out += [str(w.field_value or ""), w.field_name or "", w.field_label or ""]
+        for link in page.get_links():
+            out += [str(link.get(k) or "") for k in ("uri", "file", "nameddest")]
     out += [str(v) for v in (doc.metadata or {}).values() if v]
     out.append(doc.get_xml_metadata() or "")
     for name in doc.embfile_names():
@@ -388,6 +390,8 @@ def _rewrite_extras(doc: fitz.Document, detect_fn, version: Version, hits) -> No
                    for k in ("content", "title", "subject")}
             if any(new[k] != info.get(k, "") for k in new):
                 a.set_info(**new)
+                if a.type[0] == fitz.PDF_ANNOT_FREE_TEXT:
+                    doc.xref_set_key(a.xref, "RC", "null")
                 a.update()
 
 
@@ -452,11 +456,12 @@ def redact_pdf(
             is_scan = kind == "scan"
             if is_scan:
                 scanned.append(i)
-            if version == Version.PUBLIK:
-                for annot in list(page.annots() or []):
+            for link in page.get_links():
+                page.delete_link(link)
+            for annot in list(page.annots() or []):
+                if (version == Version.PUBLIK
+                        or annot.type[0] == fitz.PDF_ANNOT_FILE_ATTACHMENT):
                     page.delete_annot(annot)
-                for link in page.get_links():
-                    page.delete_link(link)
             findings = findings_per_page[i] if i < len(findings_per_page) else []
             targets = [
                 (f, a) for f in findings
