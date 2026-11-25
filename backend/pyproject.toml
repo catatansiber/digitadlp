@@ -16,9 +16,14 @@ dependencies = [
     "pytesseract",
     "pillow",
     "openpyxl",
+    "sqlalchemy>=2",
+    "alembic",
+    "argon2-cffi",
+    "cryptography",
 ]
 
 [project.optional-dependencies]
+postgres = ["psycopg[binary]"]
 ner = ["transformers", "torch"]
 dev = ["pytest", "httpx"]
 
