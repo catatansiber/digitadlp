@@ -91,6 +91,10 @@ python -m digitadlp
 
 Letakkan reverse proxy HTTPS (mis. nginx) di depan `127.0.0.1:8000`.
 
+## Antarmuka web
+
+Antarmuka React dibangun di folder `frontend/` (`npm ci && npm run build`, lihat README di root repo). Salin `frontend/dist` ke server lalu arahkan `DIGITADLP_FRONTEND_DIR` ke folder itu. Backend menyajikannya di `/`, sedangkan API tetap di `/api`. Untuk pengembangan, `npm run dev` di `frontend/` meneruskan `/api` ke backend di `127.0.0.1:8000`.
+
 ## API (ringkas)
 
 Semua endpoint butuh login (cookie sesi dari `POST /api/auth/login`), kecuali login itu sendiri.

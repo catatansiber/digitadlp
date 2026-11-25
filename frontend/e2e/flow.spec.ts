@@ -1,0 +1,133 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { expect, test, type Page } from "@playwright/test";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PY = resolve(HERE, "../../backend/.venv/bin/python");
+const NIK = "6474015203880002";
+const SHOTS = resolve(HERE, "../test-results");
+const tmp = mkdtempSync(join(tmpdir(), "digitadlp-e2e-"));
+
+function py(code: string, ...args: string[]): string {
+  return execFileSync(PY, ["-I", "-c", code, ...args], { encoding: "utf8" });
+}
+
+function makePdf(): string {
+  const out = join(tmp, "surat-keterangan.pdf");
+  py(
+    `import sys, pymupdf as fitz
+d = fitz.open(); p = d.new_page()
+p.insert_text((72, 100), "Surat Keterangan Domisili", fontsize=14)
+p.insert_text((72, 140), "NIK ${NIK}", fontsize=11)
+p.insert_text((72, 160), "Alamat: Jl. Contoh No. 1", fontsize=11)
+d.save(sys.argv[1])`,
+    out,
+  );
+  return out;
+}
+
+function pdfText(path: string): string {
+  return py("import sys, pymupdf as fitz\nprint(''.join(p.get_text() for p in fitz.open(sys.argv[1])))", path);
+}
+
+const shot = (page: Page, name: string) => page.screenshot({ path: join(SHOTS, `${name}.png`), fullPage: true });
+
+async function login(page: Page, username: string, password: string) {
+  await page.goto("/masuk");
+  await page.getByLabel("Nama pengguna").fill(username);
+  await page.getByLabel("Kata sandi").fill(password);
+  await page.getByRole("button", { name: "Masuk" }).click();
+  await expect(page.getByRole("button", { name: "Keluar" })).toBeVisible();
+}
+
+async function logout(page: Page) {
+  await page.getByRole("button", { name: "Keluar" }).click();
+  await expect(page).toHaveURL(/\/masuk/);
+}
+
+async function download(page: Page, version: string): Promise<string> {
+  const [dl] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("group", { name: `Versi ${version}` }).getByRole("button", { name: "Unduh" }).click(),
+  ]);
+  const path = join(tmp, `${version}-${dl.suggestedFilename()}`);
+  await dl.saveAs(path);
+  return path;
+}
+
+test("alur lengkap: admin, upload, cek, setujui, unduh, rilis, audit", async ({ page }) => {
+  const pw = "sandi-e2e-123";
+
+  // 1. Admin membuat unit dan dua pengguna.
+  await login(page, "admin", "admin-e2e-123");
+  await page.goto("/admin/unit");
+  await page.getByLabel("Nama unit").fill("Bidang Pelayanan");
+  await page.getByRole("button", { name: "Tambah unit" }).click();
+  await expect(page.getByRole("cell", { name: "Bidang Pelayanan" })).toBeVisible();
+
+  await page.goto("/admin/pengguna");
+  for (const [username, full, role] of [
+    ["rina", "Rina Pengunggah", "pengunggah"],
+    ["dedi", "Dedi Pemeriksa", "pemeriksa"],
+  ]) {
+    const form = page.locator("form.form-grid");
+    await form.getByLabel("Nama pengguna").fill(username);
+    await form.getByLabel("Nama lengkap").fill(full);
+    await form.getByLabel("Peran").selectOption(role);
+    await form.getByLabel("Unit").selectOption({ label: "Bidang Pelayanan" });
+    await form.getByLabel("Kata sandi").fill(pw);
+    await form.getByRole("button", { name: "Tambah pengguna" }).click();
+    await expect(page.getByRole("cell", { name: username, exact: true })).toBeVisible();
+  }
+  await shot(page, "01-admin-pengguna");
+  await logout(page);
+
+  // 2. Rina meng-upload PDF.
+  await login(page, "rina", pw);
+  await page.goto("/upload");
+  await page.locator('input[type="file"]').setInputFiles(makePdf());
+  await expect(page).toHaveURL(/\/dokumen\/[^/]+$/);
+  const docUrl = new URL(page.url()).pathname;
+
+  // 3. Menunggu cek, saran Rahasia.
+  await expect(page.getByText("Menunggu cek")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText("Saran label: Rahasia")).toBeVisible();
+  await shot(page, "02-rina-menunggu-cek");
+  await logout(page);
+
+  // 4. Dedi membuka dokumen, NIK disorot, lalu menyetujui.
+  await login(page, "dedi", pw);
+  await page.goto(docUrl);
+  await expect(page.getByLabel("Teks dokumen").locator("mark", { hasText: NIK })).toBeVisible();
+  await shot(page, "03-dedi-cek-temuan");
+  await page.getByRole("button", { name: "Setujui & buat versi" }).click();
+
+  // 5. Disetujui; unduh Publik (tanpa NIK) dan Rahasia (kontrol positif).
+  await expect(page.locator(".chip", { hasText: "Disetujui" }).first()).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("link", { name: "Lihat tiga versi" }).click();
+  await expect(page.getByRole("heading", { name: "Tiga versi" })).toBeVisible();
+  const publik = pdfText(await download(page, "Publik"));
+  const rahasia = pdfText(await download(page, "Rahasia"));
+  expect(rahasia).toContain(NIK);
+  expect(publik).not.toContain(NIK);
+  expect(publik).toContain("Surat Keterangan");
+  await shot(page, "04-dedi-tiga-versi");
+
+  // 6. Rilis.
+  await page.getByRole("button", { name: "Rilis versi Publik" }).click();
+  await page.getByRole("button", { name: "Ya, rilis" }).click();
+  await expect(page.getByText("Versi Publik dirilis.")).toBeVisible();
+  await expect(page.locator(".chip", { hasText: "Dirilis" })).toBeVisible();
+  await shot(page, "05-dedi-dirilis");
+  await logout(page);
+
+  // 7. Admin melihat aksi unduh di Audit.
+  await login(page, "admin", "admin-e2e-123");
+  await page.goto("/admin/audit");
+  await expect(page.getByRole("cell", { name: "Unduh versi" }).first()).toBeVisible();
+  await expect(page.getByRole("cell", { name: "Rilis versi Publik" })).toBeVisible();
+  await shot(page, "06-admin-audit");
+});
