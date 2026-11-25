@@ -86,7 +86,8 @@ def _paragraphs(root: etree._Element):
 
 
 def _text_parts(parts: dict[str, bytes]) -> list[str]:
-    names = [n for n in parts if n.endswith(".xml") and n != "[Content_Types].xml"]
+    names = [n for n in _xml_names(parts)
+             if not n.endswith(".rels") and n != "[Content_Types].xml"]
     return sorted(names, key=lambda n: (n != "word/document.xml", n))
 
 
@@ -137,8 +138,17 @@ def _values(root: etree._Element):
         yield v
 
 
+def _is_xml_type(t: str) -> bool:
+    t = t.lower().split(";")[0].strip()
+    return t.endswith("/xml") or t.endswith("+xml")
+
+
 def _xml_names(parts: dict[str, bytes]) -> list[str]:
-    return [n for n in parts if n.endswith((".xml", ".rels"))]
+    """every XML part by [Content_Types].xml (plus .rels), not by extension"""
+    types = _content_types(parts)
+    return [n for n in parts
+            if n.endswith(".rels") or n == "[Content_Types].xml"
+            or _is_xml_type(types.get(n, ""))]
 
 
 def _value_targets(parts, detect_fn, version) -> list[Finding]:
@@ -176,9 +186,11 @@ _FONT_TYPES = ("application/x-font",
 
 def _reject_unsupported(parts, types) -> None:
     for n in parts:
-        t = types.get(n, "").lower()
+        t = types.get(n, "").lower().split(";")[0].strip()
+        if t in ("application/xhtml+xml", "text/html") or "html" in t:
+            raise DocumentError(UNSUPPORTED_MSG)
         if (n.endswith(".rels") or n == "[Content_Types].xml"
-                or t.endswith("xml") or t.endswith("+xml")
+                or _is_xml_type(t)
                 or (t.startswith("image/") and n.lower().endswith(_IMAGE_EXT))
                 or t.startswith(_FONT_TYPES)
                 or n.startswith("docProps/thumbnail")):

@@ -361,3 +361,33 @@ def test_ner_does_not_touch_structural_attributes(make_docx, tmp_path):
     styles = _all_text(out)["word/styles.xml"].decode()
     assert styles.count('"Siti Rahmawati"') == 3
     Document(out)  # still opens
+
+
+# ---- review round 3 ----
+
+@pytest.mark.parametrize("part,ctype", [("word/afchunk.dat", "application/xml"),
+                                        ("word/afchunk.txt", "text/xml")])
+def test_xml_part_by_content_type_rewritten(make_docx, tmp_path, part, ctype):
+    data = f"<x><y>NIK {NIK2}</y><z a=\"{NIK2}\"/></x>".encode()
+    src = _patch(make_docx(), tmp_path, {part: data,
+                                         "[Content_Types].xml": _add_ct(part, ctype)})
+    out = _all_text(_run(src, tmp_path, Version.PUBLIK))
+    assert NIK2.encode() not in out[part]
+
+
+def test_xhtml_altchunk_rejected(make_docx, tmp_path):
+    part = "word/afchunk.html"
+    src = _patch(make_docx(), tmp_path, {
+        part: b"<html><body>NIK</body></html>",
+        "[Content_Types].xml": _add_ct(part, "application/xhtml+xml")})
+    with pytest.raises(DocumentError, match="tidak didukung"):
+        _run(src, tmp_path, Version.PUBLIK)
+
+
+def test_redact_string_overlapping_findings():
+    s = "x 3201010101019999 y"
+    a = Finding(Kind.NIK, 2, 18, "3201010101019999", "regex")
+    b = Finding(Kind.PHONE, 10, 20, "01019999 y", "regex")
+    out = docxmod._redact_string(s, lambda t: [a, b], Version.PUBLIK, [])
+    assert out == "x [NIK][HP]"
+    assert not re.search(r"\d", out)
