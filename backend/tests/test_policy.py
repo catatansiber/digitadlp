@@ -73,6 +73,9 @@ def test_mask_address():
     assert mask_value(F(Kind.ADDRESS, "Jl. Mawar12 Blok A")) == "Jl. ***"
     assert mask_value(F(Kind.ADDRESS, "RT 05 RW 02")) == "***"
     assert mask_value(F(Kind.ADDRESS, "12 Jl. X")) == "***"
+    # nothing to cut at (no number/RT): keep only the first word, never the whole text
+    assert mask_value(F(Kind.ADDRESS, "Kelurahan Gunung Elai")) == "Kelurahan ***"
+    assert mask_value(F(Kind.ADDRESS, "Jl. Merdeka Bontang")) == "Jl. ***"
 
 
 def test_mask_email():

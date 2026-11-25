@@ -355,3 +355,16 @@ def test_internal_link_uri_with_nik_removed(make_pdf, tmp_path):
     assert not r[0].get_links()
     r.close()
     assert NIK.encode() not in _all_bytes(out)
+
+
+def test_word_equal_to_a_placeholder_is_not_a_false_leak(make_pdf, tmp_path):
+    # Real IndoBERT tagged the label word "NIK" as a person name; its
+    # replacement must not be mistaken for a leak because "[NIK]" contains it.
+    src = make_pdf(TEXT)
+    ner = FakeNer({"Siti Rahmawati": Kind.NAME_CITIZEN, "NIK": Kind.NAME_CITIZEN})
+    directory = EmployeeDirectory.from_names([])
+    pages = [detect(p, ner, directory) for p in extract_pdf_text(src)]
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, pages, Version.PUBLIK)
+    text = fitz.open(out)[0].get_text()
+    assert NIK not in text and "Rahmawati" not in text

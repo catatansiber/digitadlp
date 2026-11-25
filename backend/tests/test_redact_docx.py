@@ -401,3 +401,21 @@ def test_detect_docx_covers_core_props_and_images(make_docx):
     texts = {f.text.replace(" ", "") for f in found}
     assert "3201010101010003" in texts
     assert any(DOCX_NIK in t for t in texts)
+
+
+def test_word_equal_to_a_placeholder_is_not_a_false_leak(tmp_path):
+    from docx import Document
+
+    src = tmp_path / "nik.docx"
+    d = Document()
+    d.add_paragraph(f"Nama: Siti Rahmawati, NIK {DOCX_NIK}")
+    d.save(src)
+
+    def fn(text):
+        return detect(text, FakeNer({"Siti Rahmawati": Kind.NAME_CITIZEN, "NIK": Kind.NAME_CITIZEN}),
+                      EmployeeDirectory.from_names([]))
+
+    out = tmp_path / "out.docx"
+    redact_docx(src, out, fn, Version.PUBLIK)
+    text = _xml_text(out)
+    assert DOCX_NIK not in text and "Rahmawati" not in text

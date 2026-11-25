@@ -1,0 +1,14 @@
+.git
+.superpowers
+.env
+**/node_modules
+**/__pycache__
+**/*.pyc
+backend/.venv
+backend/storage
+backend/*.db
+backend/tests
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+docs

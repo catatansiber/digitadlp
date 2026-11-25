@@ -9,6 +9,57 @@ DigitaDLP membantu instansi pemerintahan menemukan dan menyensor data pribadi (N
 | `backend/` | Aplikasi FastAPI (Python): deteksi, sensor, alur kerja, API `/api`, dan penyaji antarmuka web. Rincian di [`backend/README.md`](backend/README.md). |
 | `frontend/` | Antarmuka web React + Vite (TypeScript). Hasil build ada di `frontend/dist`. |
 | `frontend/e2e/` | Tes end-to-end Playwright terhadap backend sungguhan. |
+| `Dockerfile`, `docker-compose.yml`, `docker/` | Paket siap jalan dengan Docker. |
+
+## Cara tercepat: Docker
+
+Yang dibutuhkan: [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/macOS) atau Docker Engine dengan plugin Compose (Linux), ruang disk sekitar 5 GB, dan internet untuk build pertama.
+
+1. Siapkan konfigurasi:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Buka `.env`, lalu isi `POSTGRES_PASSWORD` dan `DIGITADLP_ADMIN_PASSWORD`. Kata sandi admin minimal 10 karakter.
+
+2. Build dan jalankan:
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+   Build pertama memakan waktu sekitar 10–20 menit. Prosesnya mengunduh tampilan web, OCR bahasa Indonesia, PyTorch versi CPU, dan model IndoBERT (±440 MB). Hasilnya image sekitar 3 GB.
+
+3. Buka **http://localhost:8000**, lalu masuk dengan `admin` dan kata sandi dari `.env`. Setelah itu, buat unit kerja dan pengguna di menu **Admin**.
+
+Perintah lain:
+
+```bash
+docker compose logs -f app
+```
+
+```bash
+docker compose down
+```
+
+`docker compose down` menghentikan aplikasi tanpa menghapus data. Data tersimpan di volume `db-data` (basis data) dan `app-data` (file terenkripsi dan kunci).
+
+**Penting, kunci enkripsi:**
+
+- Kalau `DIGITADLP_FERNET_KEY` di `.env` kosong, kunci dibuat otomatis saat pertama jalan dan disimpan di volume, di `/data/fernet.key`.
+- Kalau kunci hilang, semua dokumen yang tersimpan tidak bisa dibuka lagi. Salin kunci ke tempat aman:
+
+  ```bash
+  docker compose cp app:/data/fernet.key ./fernet.key.backup
+  ```
+
+- Jangan jalankan `docker compose down -v` kecuali Anda memang ingin menghapus semua data. Opsi `-v` menghapus volume.
+
+Catatan:
+
+- Aplikasi hanya bisa dibuka dari komputer ini, karena port terikat ke `127.0.0.1`. Untuk dibuka dari jaringan kantor, ubah `ports` di `docker-compose.yml`, pasang HTTPS (misalnya lewat reverse proxy), lalu set `DIGITADLP_COOKIE_SECURE=true`.
+- Model NER lain bisa dipakai lewat `docker compose build --build-arg NER_MODEL=<nama-model-huggingface>`.
 
 ## Build antarmuka web
 
