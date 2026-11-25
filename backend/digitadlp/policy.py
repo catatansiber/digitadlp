@@ -38,15 +38,9 @@ def default_label_for(f: Finding) -> Label:
 def suggest_label(
     findings: list[Finding], rules: Mapping[Kind, Label] | None = None
 ) -> Label:
-    if rules is not None:
-        labels = [rules.get(f.kind, default_label_for(f)) for f in findings]
-        return max(labels, key=_LABEL_ORDER.__getitem__, default=Label.PUBLIK)
-    strengths = {f.strength for f in findings}
-    if Strength.STRONG in strengths:
-        return Label.RAHASIA
-    if Strength.MEDIUM in strengths or Strength.EMPLOYEE in strengths:
-        return Label.INTERNAL
-    return Label.PUBLIK
+    rules = rules or {}
+    labels = [rules.get(f.kind, default_label_for(f)) for f in findings]
+    return max(labels, key=_LABEL_ORDER.__getitem__, default=Label.PUBLIK)
 
 
 def action_for(f: Finding, v: Version) -> Action:

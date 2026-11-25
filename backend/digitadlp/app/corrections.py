@@ -3,7 +3,7 @@
 import re
 from collections.abc import Callable
 
-from ..models import Finding, Kind
+from ..models import Finding, Kind, Strength
 from .models import Correction, CorrectionOp
 
 
@@ -35,6 +35,28 @@ def apply_corrections(
     return pages
 
 
+_RANK = {Strength.STRONG: 2, Strength.MEDIUM: 1, Strength.EMPLOYEE: 1}
+
+
+def _merge(findings: list[Finding], text: str) -> list[Finding]:
+    """Union overlapping/duplicate spans; strongest kind wins (manual on ties)."""
+    out: list[Finding] = []
+    best: Finding | None = None
+    for f in sorted(findings, key=lambda f: (f.start, -f.end)):
+        if out and f.start < out[-1].end:
+            start, end = out[-1].start, max(out[-1].end, f.end)
+            if (_RANK[f.strength], f.source == "manual") > (
+                _RANK[best.strength],
+                best.source == "manual",
+            ):
+                best = f
+            out[-1] = Finding(best.kind, start, end, text[start:end], best.source)
+        else:
+            best = f
+            out.append(f)
+    return out
+
+
 def corrected_detect_fn(
     detect_fn: Callable[[str], list[Finding]], corrections: list[Correction]
 ) -> Callable[[str], list[Finding]]:
@@ -48,6 +70,6 @@ def corrected_detect_fn(
                 continue
             for m in re.finditer(re.escape(c.text), text, re.IGNORECASE):
                 out.append(Finding(Kind(c.kind), m.start(), m.end(), m.group(), "manual"))
-        return sorted(out, key=lambda f: (f.start, f.end))
+        return _merge(out, text)
 
     return fn

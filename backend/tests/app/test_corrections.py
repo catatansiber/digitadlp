@@ -71,3 +71,17 @@ def test_corrected_detect_fn_ignore():
     base = lambda t: [F(Kind.PHONE, "0812")]
     fn = corrected_detect_fn(base, [C(CorrectionOp.ABAIKAN, "0812")])
     assert fn("x 0812") == []
+
+
+def test_corrected_detect_fn_merges_overlaps():
+    base = lambda t: [F(Kind.NAME_CITIZEN, "Rina", start=3)]
+    fn = corrected_detect_fn(base, [C(CorrectionOp.TAMBAH, "Bu Rina")])
+    out = fn("Bu Rina tinggal")
+    assert [(f.start, f.end, f.text) for f in out] == [(0, 7, "Bu Rina")]
+
+
+def test_corrected_detect_fn_merge_keeps_stronger_kind():
+    base = lambda t: [F(Kind.NIK, "6474015203880002", start=2)]
+    fn = corrected_detect_fn(base, [C(CorrectionOp.TAMBAH, "6474015203880002")])
+    out = fn("x 6474015203880002 y")
+    assert len(out) == 1 and out[0].kind == Kind.NIK
