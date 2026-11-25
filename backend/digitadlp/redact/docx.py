@@ -31,12 +31,8 @@ _REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 _CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 _P, _T, _DT = f"{{{W}}}p", f"{{{W}}}t", f"{{{W}}}delText"
 _TAB, _BR, _CR = f"{{{W}}}tab", f"{{{W}}}br", f"{{{W}}}cr"
-_TEXT_PART = re.compile(
-    r"^word/(document|header\d*|footer\d*|footnotes|endnotes|comments)\.xml$"
-)
 _COMMENT_PART = re.compile(r"^word/(comments[A-Za-z]*|people)\.xml$")
 _IMAGE_EXT = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff")
-_TAG = re.compile(rb"<[^>]+>")
 
 DetectFn = Callable[[str], list[Finding]]
 
@@ -89,7 +85,7 @@ def _paragraphs(root: etree._Element):
 
 
 def _text_parts(parts: dict[str, bytes]) -> list[str]:
-    names = [n for n in parts if _TEXT_PART.match(n)]
+    names = [n for n in parts if n.endswith(".xml") and n != "[Content_Types].xml"]
     return sorted(names, key=lambda n: (n != "word/document.xml", n))
 
 
@@ -104,6 +100,54 @@ def _paragraph_texts(parts: dict[str, bytes]) -> list[str]:
         for p in _paragraphs(root):
             out.append("".join(t for _, t in _segments(p)))
     return out
+
+
+def _values(root: etree._Element):
+    """every text node, tail and attribute value (entities/char refs decoded)"""
+    for el in root.iter():
+        if isinstance(el.tag, str):
+            yield from el.attrib.values()
+        yield el.text or ""
+        yield el.tail or ""
+
+
+def _xml_names(parts: dict[str, bytes]) -> list[str]:
+    return [n for n in parts if n.endswith((".xml", ".rels"))]
+
+
+def _value_targets(parts, detect_fn, version) -> list[Finding]:
+    out = []
+    for name in _xml_names(parts):
+        for v in _values(_parse(parts[name], name)):
+            if len(v.strip()) >= 4:
+                out += [f for f in detect_fn(v) if action_for(f, version) != Action.KEEP]
+    return out
+
+
+def _content_types(parts: dict[str, bytes]) -> dict[str, str]:
+    ct = _parse(parts["[Content_Types].xml"], "[Content_Types].xml")
+    defaults, overrides = {}, {}
+    for el in ct:
+        local = etree.QName(el).localname
+        if local == "Default":
+            defaults[el.get("Extension", "").lower()] = el.get("ContentType", "")
+        elif local == "Override":
+            overrides[el.get("PartName", "").lstrip("/")] = el.get("ContentType", "")
+    return {n: overrides.get(n, defaults.get(n.rsplit(".", 1)[-1].lower(), ""))
+            for n in parts}
+
+
+EMBED_MSG = ("Dokumen berisi objek tersemat (Excel/Word/OLE). Hapus atau ganti "
+             "objek tersebut, lalu upload lagi.")
+
+
+def _reject_embeddings(parts, types) -> None:
+    for n in parts:
+        t = types.get(n, "").lower()
+        if (n.startswith("word/embeddings/") or "oleobject" in t
+                or t.endswith(".package") or "/package" in t and "relationships" not in t
+                or n.lower().endswith(".bin") and "vbaproject" not in n.lower()):
+            raise DocumentError(EMBED_MSG)
 
 
 # ---------------------------------------------------------------- rewriting
@@ -150,6 +194,30 @@ def _redact_paragraph(p, detect_fn: DetectFn, version: Version, hits: list) -> N
             raise DocumentError(f"cannot place {f.kind} replacement")
 
 
+def _redact_string(s: str, detect_fn, version, hits) -> str:
+    if len(s.strip()) < 4:
+        return s
+    todo = [(f, a) for f in detect_fn(s) if (a := action_for(f, version)) != Action.KEEP]
+    for f, a in sorted(todo, key=lambda x: x[0].start, reverse=True):
+        hits.append(f)
+        s = s[:f.start] + _replacement(f, a) + s[f.end:]
+    return s
+
+
+def _redact_values(root, detect_fn, version, hits) -> None:
+    """generic per-node pass: every text node, tail and attribute value"""
+    for el in root.iter():
+        if isinstance(el.tag, str):
+            for k, v in el.attrib.items():
+                nv = _redact_string(v, detect_fn, version, hits)
+                if nv != v:
+                    el.set(k, nv)
+        if el.text:
+            el.text = _redact_string(el.text, detect_fn, version, hits)
+        if el.tail:
+            el.tail = _redact_string(el.tail, detect_fn, version, hits)
+
+
 def _unwrap(el: etree._Element) -> None:
     parent = el.getparent()
     idx = parent.index(el)
@@ -176,6 +244,15 @@ def _strip_revisions_and_comments(root: etree._Element) -> None:
                 "moveToRangeEnd", "commentRangeStart", "commentRangeEnd"):
         for el in list(root.iter(w(tag))):
             el.getparent().remove(el)
+    for tag in ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange",
+                "trPrChange", "tcPrChange", "tblGridChange", "numberingChange"):
+        for el in list(root.iter(w(tag))):
+            el.getparent().remove(el)
+    for el in root.iter():
+        if isinstance(el.tag, str):
+            for k in list(el.attrib):
+                if etree.QName(k).localname in ("author", "initials"):
+                    del el.attrib[k]
     for ref in list(root.iter(w("commentReference"))):
         run = ref.getparent()
         if run.tag == w("r") and run.getparent() is not None:
@@ -224,9 +301,22 @@ def _clear_core(parts: dict[str, bytes]) -> None:
                                  standalone=True)
 
 
+def _clear_app(parts: dict[str, bytes]) -> None:
+    name = "docProps/app.xml"
+    if name not in parts:
+        return
+    root = _parse(parts[name], name)
+    for el in root:
+        if etree.QName(el).localname in ("Company", "Manager", "HyperlinkBase"):
+            el.text = ""
+    parts[name] = etree.tostring(root, xml_declaration=True, encoding="UTF-8",
+                                 standalone=True)
+
+
 def _redact_images(parts: dict[str, bytes], detect_fn: DetectFn,
-                   version: Version) -> None:
-    for name in [n for n in parts if n.startswith("word/media/")]:
+                   version: Version, types: dict[str, str]) -> None:
+    for name in [n for n in parts if types.get(n, "").lower().startswith("image/")
+                 or n.startswith("word/media/")]:
         if not name.lower().endswith(_IMAGE_EXT):
             raise DocumentError(f"cannot inspect embedded media {name}")
         try:
@@ -254,10 +344,8 @@ def _write(parts: dict[str, bytes], dst: Path) -> None:
 
 def _verify(path: Path, targets: list[Finding]) -> None:
     parts = _read(Path(path))
-    for name, data in parts.items():
-        if not name.endswith((".xml", ".rels")):
-            continue
-        text = _TAG.sub(b"", data).decode("utf-8", "replace")
+    for name in _xml_names(parts):
+        text = "\n".join(_values(_parse(parts[name], name)))
         leaked = _leaks(text, targets)
         if leaked:
             raise DocumentError(f"redaction verification failed in {name}: "
@@ -271,17 +359,29 @@ def redact_docx(src: Path, dst: Path, detect_fn: DetectFn, version: Version) -> 
         shutil.copyfile(src, dst)
         return
     publik = version == Version.PUBLIK
+    types = _content_types(parts)
+    _reject_embeddings(parts, types)
+    cache: dict[str, list[Finding]] = {}
+    raw_detect = detect_fn
+
+    def detect_fn(t: str) -> list[Finding]:  # noqa: F811 - memoized wrapper
+        if t not in cache:
+            cache[t] = raw_detect(t)
+        return cache[t]
+
     # leak-check targets come from the untouched input, independent of rewrite
     targets = [f for t in _paragraph_texts(parts) for f in detect_fn(t)
                if action_for(f, version) != Action.KEEP]
+    targets += _value_targets(parts, detect_fn, version)
+    removed = {n for n in parts if n.startswith("docProps/thumbnail")}
     if publik:
-        removed = {n for n in parts
-                   if _COMMENT_PART.match(n) or n.startswith("customXml/")
-                   or n == "docProps/custom.xml"}
+        removed |= {n for n in parts
+                    if _COMMENT_PART.match(n) or n.startswith("customXml/")
+                    or n == "docProps/custom.xml"}
+    if removed:
         for n in removed:
             del parts[n]
         _drop_rels(parts, removed)
-        _clear_core(parts)
     hits: list[Finding] = []
     for name in _text_parts(parts):
         root = _parse(parts[name], name)
@@ -289,9 +389,18 @@ def redact_docx(src: Path, dst: Path, detect_fn: DetectFn, version: Version) -> 
             _strip_revisions_and_comments(root)
         for p in list(_paragraphs(root)):
             _redact_paragraph(p, detect_fn, version, hits)
+        _redact_values(root, detect_fn, version, hits)
         parts[name] = etree.tostring(root, xml_declaration=True,
                                      encoding="UTF-8", standalone=True)
-    _redact_images(parts, detect_fn, version)
+    for name in [n for n in parts if n.endswith(".rels")]:
+        root = _parse(parts[name], name)
+        _redact_values(root, detect_fn, version, hits)
+        parts[name] = etree.tostring(root, xml_declaration=True,
+                                     encoding="UTF-8", standalone=True)
+    if publik:
+        _clear_core(parts)
+        _clear_app(parts)
+    _redact_images(parts, detect_fn, version, types)
     _write(parts, dst)
     try:
         _verify(dst, targets + hits)

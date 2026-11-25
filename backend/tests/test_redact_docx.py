@@ -183,3 +183,149 @@ def test_clean_image_untouched(tmp_path):
     out = _run(src, tmp_path, Version.PUBLIK)
     after = {n: b for n, b in _all_text(out).items() if n.startswith("word/media/")}
     assert before == after
+
+
+# ---- review fixes (A-E) ----
+
+W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+
+
+def _patch(src, tmp_path, edits, name="patched.docx"):
+    """edits: {part: bytes | callable(old_bytes)->bytes}"""
+    dst = tmp_path / name
+    with zipfile.ZipFile(src) as zi:
+        parts = {n: zi.read(n) for n in zi.namelist()}
+    for n, v in edits.items():
+        parts[n] = v(parts[n]) if callable(v) else v
+    with zipfile.ZipFile(dst, "w") as zo:
+        for n, b in parts.items():
+            zo.writestr(n, b)
+    return dst
+
+
+def _body_insert(xml):
+    return lambda b: b.replace(b"<w:body>", b"<w:body>" + xml.encode(), 1)
+
+
+def _all_values(path):
+    """every text node and attribute value of every XML part, decoded"""
+    from lxml import etree
+    out = []
+    for n, b in _all_text(path).items():
+        if n.endswith((".xml", ".rels")):
+            root = etree.fromstring(b)
+            for el in root.iter():
+                out += [el.text or "", el.tail or ""] + list(el.attrib.values())
+    return "\n".join(out)
+
+
+NIK2 = "3201010101019999"
+EMAIL = "budi.santoso@contoh.co.id"
+
+
+@pytest.mark.parametrize("version", [Version.PUBLIK, Version.INTERNAL])
+def test_alt_text_nik(make_docx, tmp_path, version):
+    from docx import Document
+    from .conftest import _nik_image
+    src = tmp_path / "alt.docx"
+    d = Document()
+    d.add_paragraph("Laporan")
+    d.add_picture(io.BytesIO(_nik_image("Laporan Kegiatan")))
+    d.save(src)
+    src = _patch(src, tmp_path, {"word/document.xml": lambda b: re.sub(
+        rb'descr="[^"]*"|(<wp:docPr )', lambda m: m.group(0) if m.group(1) is None
+        else b'<wp:docPr descr="NIK ' + NIK2.encode() + b'" title="NIK ' + NIK2.encode() + b'" ', b)})
+    assert NIK2 in _all_values(src)
+    out = _run(src, tmp_path, version)
+    assert NIK2 not in re.sub(r"\D", "", _all_values(out))
+
+
+def test_mailto_hyperlink(make_docx, tmp_path):
+    src = _patch(make_docx(), tmp_path, {
+        "word/_rels/document.xml.rels": lambda b: b.replace(
+            b"</Relationships>",
+            b'<Relationship Id="rIdMail" Type="http://schemas.openxmlformats.org/'
+            b'officeDocument/2006/relationships/hyperlink" Target="mailto:'
+            + EMAIL.encode() + b'" TargetMode="External"/></Relationships>'),
+        "word/document.xml": _body_insert(
+            '<w:p><w:hyperlink r:id="rIdMail" xmlns:r="http://schemas.openxmlformats.org/'
+            'officeDocument/2006/relationships"><w:r><w:t>kirim surel</w:t></w:r>'
+            '</w:hyperlink></w:p>')})
+    for v in (Version.PUBLIK, Version.INTERNAL):
+        out = _run(src, tmp_path, v)
+        assert EMAIL not in _all_values(out).casefold()
+
+
+def test_glossary_and_chart_nik(make_docx, tmp_path):
+    src = _patch(make_docx(), tmp_path, {
+        "word/glossary/document.xml":
+            f'<w:glossaryDocument {W_NS}><w:docParts><w:docPart><w:docPartBody>'
+            f'<w:p><w:r><w:t>NIK {NIK2}</w:t></w:r></w:p></w:docPartBody></w:docPart>'
+            '</w:docParts></w:glossaryDocument>'.encode(),
+        "word/charts/chart1.xml":
+            b'<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">'
+            b'<c:v>NIK 3201010101018888</c:v></c:chartSpace>'})
+    for v in (Version.PUBLIK, Version.INTERNAL):
+        digits = re.sub(r"\D", "", _all_values(_run(src, tmp_path, v)))
+        assert NIK2 not in digits and "3201010101018888" not in digits
+
+
+def test_app_xml_company_cleared(make_docx, tmp_path):
+    src = _patch(make_docx(), tmp_path, {"docProps/app.xml": lambda b: re.sub(
+        rb"</Properties>", b"<Company>Diskominfo Bontang</Company>"
+        b"<Manager>Pak Kepala</Manager></Properties>", b)})
+    parts = _all_text(_run(src, tmp_path, Version.PUBLIK))
+    app = parts["docProps/app.xml"]
+    assert b"Diskominfo Bontang" not in app and b"Pak Kepala" not in app
+
+
+def test_numeric_char_ref_nik(make_docx, tmp_path):
+    enc = "".join(f"&#{ord(c)};" for c in NIK2)
+    src = _patch(make_docx(), tmp_path, {"word/document.xml": _body_insert(
+        f'<w:p><w:r><w:t>NIK {enc}</w:t></w:r></w:p>'
+        f'<w:p><w:sdt><w:sdtPr><w:alias w:val="NIK {enc}"/></w:sdtPr>'
+        '<w:sdtContent><w:p><w:r><w:t>isi</w:t></w:r></w:p></w:sdtContent></w:sdt></w:p>')})
+    for v in (Version.PUBLIK, Version.INTERNAL):
+        assert NIK2 not in re.sub(r"\D", "", _all_values(_run(src, tmp_path, v)))
+
+
+def test_instrtext_nik(make_docx, tmp_path):
+    src = _patch(make_docx(), tmp_path, {"word/document.xml": _body_insert(
+        '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        f'<w:r><w:instrText xml:space="preserve"> HYPERLINK "x" \\o "NIK {NIK2}" </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
+        f'<w:p><w:fldSimple w:instr=" AUTHOR NIK {NIK2} "><w:r><w:t>a</w:t></w:r></w:fldSimple></w:p>')})
+    for v in (Version.PUBLIK, Version.INTERNAL):
+        assert NIK2 not in re.sub(r"\D", "", _all_values(_run(src, tmp_path, v)))
+
+
+def test_embedding_rejected(make_docx, tmp_path):
+    src = _patch(make_docx(), tmp_path, {"word/embeddings/oleObject1.bin": b"\xd0\xcf\x11\xe0"})
+    for v in (Version.PUBLIK, Version.INTERNAL):
+        with pytest.raises(DocumentError, match="objek tersemat"):
+            _run(src, tmp_path, v)
+
+
+def test_publik_removes_format_revisions_and_authors(make_docx, tmp_path):
+    src = _patch(make_docx(), tmp_path, {"word/document.xml": _body_insert(
+        '<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="Budi Santoso"><w:rPr/>'
+        '</w:rPrChange></w:rPr><w:t>teks</w:t></w:r></w:p>')})
+    doc = _all_text(_run(src, tmp_path, Version.PUBLIK))["word/document.xml"]
+    assert b"rPrChange" not in doc and b"Budi Santoso" not in doc and b"w:author" not in doc
+
+
+def test_guard_checks_attributes(make_docx, tmp_path):
+    src = _patch(make_docx(), tmp_path, {"word/document.xml": _body_insert(
+        f'<w:p><w:sdt><w:sdtPr><w:tag w:val="&#51;201010101019999"/></w:sdtPr></w:sdt></w:p>')})
+    with pytest.raises(DocumentError):
+        docxmod._verify(src, [Finding(Kind.NIK, 0, 16, NIK2, "regex")])
+
+
+def test_image_outside_media_ocrd(make_docx, tmp_path):
+    from .conftest import _nik_image
+    src = _patch(make_docx(), tmp_path, {
+        "word/other/pic.png": _nik_image(f"NIK {DOCX_NIK}"),
+        "[Content_Types].xml": lambda b: b if b'Extension="png"' in b else b.replace(
+            b"</Types>", b'<Default Extension="png" ContentType="image/png"/></Types>')})
+    out = _all_text(_run(src, tmp_path, Version.PUBLIK))
+    assert Image.open(io.BytesIO(out["word/other/pic.png"])).convert("L").getextrema() == (0, 0)
