@@ -213,3 +213,169 @@ def test_worker_processes_job(tmp_path, store, engine, make_pdf, app_settings):
     with factory() as db:
         assert db.get(Document, doc_id).status == Status.MENUNGGU_CEK
     eng.dispose()
+
+
+# --- race / review fixes ---------------------------------------------------
+from sqlalchemy import update as _update
+from sqlalchemy.orm import Session as _Session
+
+import digitadlp.app.processing as _processing
+from digitadlp.redact.pdf import DocumentError as _DocumentError
+
+
+def _bump_revision(db, doc_id):
+    with _Session(db.get_bind()) as other:
+        other.execute(
+            _update(Document).where(Document.id == doc_id)
+            .values(revision=Document.revision + 1, status=Status.MENUNGGU_CEK)
+        )
+        other.commit()
+
+
+def _approved_with_versions(db, store, engine, make_pdf):
+    doc = _doc(db, store, make_pdf(TEXT))
+    _run(db, store, engine, JobKind.DETEKSI, doc)
+    _run(db, store, engine, JobKind.VERSI, doc)
+    return doc, {v: store.get(doc.id, f"{v}.pdf") for v in ("publik", "internal", "rahasia")}
+
+
+def _sentinel_versions(store, doc):
+    for v in ("publik", "internal", "rahasia"):
+        store.put(doc.id, f"{v}.pdf", b"NEWER-" + v.encode())
+
+
+def test_revision_bump_during_versi_leaves_versions_and_state(db, store, engine, make_pdf, monkeypatch):
+    doc, _ = _approved_with_versions(db, store, engine, make_pdf)
+    _sentinel_versions(store, doc)  # stands in for versions of the newer revision
+    real = _processing.redact_pdf
+    calls = {"n": 0}
+
+    def bumping(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            _bump_revision(db, doc.id)
+        return real(*a, **k)
+
+    monkeypatch.setattr(_processing, "redact_pdf", bumping)
+    job = _run(db, store, engine, JobKind.VERSI, doc)
+    assert job.state == JobState.SELESAI
+    assert doc.status == Status.MENUNGGU_CEK  # not overwritten to disetujui
+    for v in ("publik", "internal", "rahasia"):
+        assert store.get(doc.id, f"{v}.pdf") == b"NEWER-" + v.encode()
+
+
+def test_stale_failing_versi_keeps_newer_versions(db, store, engine, make_pdf, monkeypatch):
+    doc, _ = _approved_with_versions(db, store, engine, make_pdf)
+    _sentinel_versions(store, doc)
+
+    def failing(*a, **k):
+        _bump_revision(db, doc.id)
+        raise _DocumentError("rusak")
+
+    monkeypatch.setattr(_processing, "redact_pdf", failing)
+    job = _run(db, store, engine, JobKind.VERSI, doc)
+    assert job.state == JobState.GAGAL
+    assert doc.status == Status.MENUNGGU_CEK
+    for v in ("publik", "internal", "rahasia"):
+        assert store.get(doc.id, f"{v}.pdf") == b"NEWER-" + v.encode()
+
+
+def test_revision_bump_during_deteksi_no_write(db, store, engine, make_pdf, monkeypatch):
+    doc = _doc(db, store, make_pdf(TEXT))
+    real = _processing.extract_pdf_text
+
+    def bumping(*a, **k):
+        _bump_revision(db, doc.id)
+        return real(*a, **k)
+
+    monkeypatch.setattr(_processing, "extract_pdf_text", bumping)
+    job = _run(db, store, engine, JobKind.DETEKSI, doc)
+    assert job.state == JobState.SELESAI
+    assert doc.findings_json == "[]" and doc.label is None
+    assert db.query(AuditEvent).count() == 0
+
+
+def test_reclaimed_job_original_runner_cannot_commit(db, store, engine, make_pdf):
+    doc = _doc(db, store, make_pdf(TEXT))
+    enqueue(db, JobKind.DETEKSI, doc)
+    db.commit()
+    first = claim(db, 30)
+    old_token = first.claim_token
+    assert old_token
+    db.execute(_update(Job).where(Job.id == first.id)
+               .values(claimed_at=utcnow() - timedelta(minutes=31)))
+    db.commit()
+    second = claim(db, 30)
+    new_token, job_id, doc_id = second.claim_token, first.id, doc.id
+    assert new_token != old_token
+    db.expunge_all()
+    stale = Job(id=job_id, kind=JobKind.DETEKSI, document_id=doc_id,
+                revision=0, state=JobState.BERJALAN, claim_token=old_token)
+    run_job(db, store, engine, stale)
+    d = db.get(Document, doc_id)
+    j = db.get(Job, job_id)
+    assert d.status == Status.DIPROSES and d.findings_json == "[]"
+    assert j.state == JobState.BERJALAN and j.claim_token == new_token
+    assert db.query(AuditEvent).count() == 0
+
+
+def test_lost_claim_failure_has_no_side_effects(db, store, engine, make_pdf, monkeypatch):
+    doc, _ = _approved_with_versions(db, store, engine, make_pdf)
+    enqueue(db, JobKind.VERSI, doc)
+    db.commit()
+    job = claim(db, 30)
+
+    def steal_and_fail(*a, **k):
+        with _Session(db.get_bind()) as other:
+            other.execute(_update(Job).where(Job.id == job.id).values(claim_token="x" * 32))
+            other.commit()
+        raise _DocumentError("rusak")
+
+    monkeypatch.setattr(_processing, "redact_pdf", steal_and_fail)
+    run_job(db, store, engine, job)
+    db.refresh(doc)
+    db.refresh(job)
+    assert job.state == JobState.BERJALAN
+    assert doc.status == Status.DISETUJUI
+    assert store.exists(doc.id, "publik.pdf")
+
+
+def test_touch_called_during_job(db, store, engine, make_pdf):
+    doc = _doc(db, store, make_pdf(TEXT))
+    _run(db, store, engine, JobKind.DETEKSI, doc)
+    enqueue(db, JobKind.VERSI, doc)
+    db.commit()
+    job = claim(db, 30)
+    n = {"c": 0}
+    run_job(db, store, engine, job, touch=lambda: n.__setitem__("c", n["c"] + 1))
+    assert n["c"] >= 3
+
+
+def test_heartbeat_refreshes_claimed_at(db, store, make_pdf):
+    from digitadlp.app.jobs import heartbeat
+    doc = _doc(db, store, make_pdf(TEXT))
+    enqueue(db, JobKind.DETEKSI, doc)
+    db.commit()
+    job = claim(db, 30)
+    old = utcnow() - timedelta(minutes=20)
+    db.execute(_update(Job).where(Job.id == job.id).values(claimed_at=old))
+    db.commit()
+    heartbeat(db, job.id, job.claim_token, interval=0)()
+    db.refresh(job)
+    assert job.claimed_at > old + timedelta(minutes=19)
+
+
+def test_pdf_extras_stored_with_null_page(db, store, engine, make_pdf):
+    doc = _doc(db, store, make_pdf("Surat biasa", metadata={"author": NIK, "title": "x"}))
+    _run(db, store, engine, JobKind.DETEKSI, doc)
+    entries = [f for p in json.loads(doc.findings_json) for f in p]
+    assert any(f["page"] is None and f["text"] == NIK for f in entries)
+
+
+def test_deteksi_keeps_reviewer_label(db, store, engine, make_pdf):
+    doc = _doc(db, store, make_pdf(TEXT))
+    doc.label = "publik"
+    doc.label_set_by_reviewer = True
+    db.commit()
+    _run(db, store, engine, JobKind.DETEKSI, doc)
+    assert doc.suggested_label == "rahasia" and doc.label == "publik"

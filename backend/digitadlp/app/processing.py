@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -31,18 +31,27 @@ class Engine:
     directory: EmployeeDirectory
 
 
+Touch = Callable[[], None]
+
+
+def _noop() -> None:
+    pass
+
+
 def _ext(doc: Document) -> str:
     return doc.ext.lower().lstrip(".")
 
 
-def _corrections(db: Session, doc: Document) -> list[Correction]:
-    return list(
-        db.scalars(
+def load_corrections(db: Session, doc_id: str) -> list[SimpleNamespace]:
+    """Salinan koreksi (bukan objek ORM) agar aman dipakai lintas commit."""
+    return [
+        SimpleNamespace(kind=c.kind, page=c.page, text=c.text, op=c.op)
+        for c in db.scalars(
             select(Correction)
-            .where(Correction.document_id == doc.id)
+            .where(Correction.document_id == doc_id)
             .order_by(Correction.created_at)
         )
-    )
+    ]
 
 
 def label_rules(db: Session) -> dict[Kind, Label]:
@@ -55,10 +64,8 @@ def label_rules(db: Session) -> dict[Kind, Label]:
     return rules
 
 
-def _analyze(
-    src: Path, ext: str, engine: Engine, corrections: list[Correction]
-) -> tuple[list[list[Finding]], list[Finding], Callable[[str], list[Finding]]]:
-    """Hitung temuan (sudah dikoreksi) per halaman + temuan ekstra PDF."""
+def _analyze(src: Path, ext: str, engine: Engine, corrections):
+    """Temuan (sudah dikoreksi) per halaman, temuan ekstra PDF, dan detect_fn."""
 
     def base(text: str) -> list[Finding]:
         return detect(text, engine.ner, engine.directory)
@@ -72,59 +79,88 @@ def _analyze(
     return [detect_docx(src, fn)], [], fn
 
 
-def serialize(pages: list[list[Finding]]) -> str:
-    return json.dumps(
-        [
-            [
-                {
-                    "kind": f.kind.value, "text": f.text, "page": i,
-                    "start": f.start, "end": f.end, "source": f.source,
-                }
-                for f in page
-            ]
-            for i, page in enumerate(pages)
-        ],
-        ensure_ascii=False,
-    )
+def _entry(f: Finding, page: int | None) -> dict:
+    return {
+        "kind": f.kind.value, "text": f.text, "page": page,
+        "start": f.start, "end": f.end, "source": f.source,
+    }
 
 
-def run_deteksi(db: Session, store: FileStore, engine: Engine, doc: Document) -> None:
-    ext = _ext(doc)
-    corrections = _corrections(db, doc)
-    with store.decrypted(doc.id, f"source.{ext}") as src:
+def serialize(pages: list[list[Finding]], extras: list[Finding] = ()) -> str:
+    """List per halaman. Temuan ekstra PDF (metadata, anotasi) ikut di daftar
+    halaman pertama dengan page=null, supaya jumlah halaman tetap."""
+    out = [[_entry(f, i) for f in page] for i, page in enumerate(pages)]
+    if extras:
+        if not out:
+            out.append([])
+        out[0].extend(_entry(f, None) for f in extras)
+    return json.dumps(out, ensure_ascii=False)
+
+
+@dataclass
+class DeteksiResult:
+    findings_json: str
+    label: Label
+
+
+def compute_deteksi(
+    db: Session, store: FileStore, engine: Engine, doc: Document, touch: Touch = _noop
+) -> DeteksiResult:
+    """Hitung temuan tanpa menulis apa pun ke DB."""
+    ext, doc_id = _ext(doc), doc.id
+    corrections = load_corrections(db, doc_id)
+    rules = label_rules(db)
+    with store.decrypted(doc_id, f"source.{ext}") as src:
         pages, extras, _ = _analyze(src, ext, engine, corrections)
-    label = suggest_label([f for p in pages for f in p] + extras, label_rules(db))
-    doc.findings_json = serialize(pages)
-    doc.suggested_label = label.value
-    doc.label = label.value
+    touch()
+    label = suggest_label([f for p in pages for f in p] + extras, rules)
+    return DeteksiResult(serialize(pages, extras), label)
+
+
+def apply_deteksi(db: Session, doc: Document, result: DeteksiResult) -> None:
+    doc.findings_json = result.findings_json
+    doc.suggested_label = result.label.value
+    if not doc.label_set_by_reviewer:
+        doc.label = result.label.value
     doc.status = Status.MENUNGGU_CEK
-    record(db, None, "deteksi_selesai", doc, detail=f"label={label.value}")
+    record(db, None, "deteksi_selesai", doc, detail=f"label={result.label.value}")
 
 
-def run_versi(db: Session, store: FileStore, engine: Engine, doc: Document) -> None:
-    ext = _ext(doc)
-    corrections = _corrections(db, doc)
-    store.delete_versions(doc.id)
-    with tempfile.TemporaryDirectory(prefix="digitadlp-") as tmp:
-        tmpdir = Path(tmp)
-        with store.decrypted(doc.id, f"source.{ext}") as src:
+def render_versi(
+    db: Session, store: FileStore, engine: Engine, doc: Document, tmpdir: Path,
+    touch: Touch = _noop,
+) -> dict[str, Path]:
+    """Buat ketiga versi ke tmpdir (tidak menyentuh store atau DB)."""
+    ext, doc_id = _ext(doc), doc.id
+    corrections = load_corrections(db, doc_id)
+    out: dict[str, Path] = {}
+    with store.decrypted(doc_id, f"source.{ext}") as src:
+        # Selalu hitung ulang dari sumber; findings_json tidak dipercaya.
+        if ext == "pdf":
+            pages, _, fn = _analyze(src, ext, engine, corrections)
+        else:
+            fn = corrected_detect_fn(
+                lambda t: detect(t, engine.ner, engine.directory), corrections
+            )
+        touch()
+        for v in VERSIONS:
+            dst = tmpdir / f"{v}.{ext}"
             if ext == "pdf":
-                # Selalu hitung ulang dari sumber; findings_json tidak dipercaya.
-                pages, _, fn = _analyze(src, ext, engine, corrections)
+                redact_pdf(src, dst, pages, Version(v), fn)
             else:
-                fn = corrected_detect_fn(
-                    lambda t: detect(t, engine.ner, engine.directory), corrections
-                )
-            for v in VERSIONS:
-                dst = tmpdir / f"{v}.{ext}"
-                if ext == "pdf":
-                    redact_pdf(src, dst, pages, Version(v), fn)
-                else:
-                    redact_docx(src, dst, fn, Version(v))
-        try:
-            for v in VERSIONS:
-                store.put_file(doc.id, f"{v}.{ext}", tmpdir / f"{v}.{ext}")
-        except BaseException:
-            store.delete_versions(doc.id)
-            raise
+                redact_docx(src, dst, fn, Version(v))
+            out[v] = dst
+            touch()
+    return out
+
+
+def store_versi(store: FileStore, doc: Document, files: dict[str, Path]) -> None:
+    ext = _ext(doc)
+    store.delete_versions(doc.id)
+    try:
+        for v in VERSIONS:
+            store.put_file(doc.id, f"{v}.{ext}", files[v])
+    except BaseException:
+        store.delete_versions(doc.id)
+        raise
     doc.status = Status.DISETUJUI

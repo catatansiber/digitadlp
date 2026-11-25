@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 
 from sqlalchemy import (
+    false,
     Boolean,
     DateTime,
     Enum,
@@ -138,6 +139,9 @@ class Document(Base):
     approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     released_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     findings_json: Mapped[str] = mapped_column(Text, default="[]")
+    label_set_by_reviewer: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
     revision: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
@@ -166,6 +170,7 @@ class Job(Base):
         _enum(JobState), default=JobState.ANTRI, index=True
     )
     claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    claim_token: Mapped[str | None] = mapped_column(String(32), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 

@@ -2,21 +2,26 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 import threading
+import time
 import traceback
 from collections.abc import Callable
 from datetime import timedelta
+from pathlib import Path
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from ..redact.pdf import DocumentError
 from .config import Settings
-from .models import Document, Job, JobKind, JobState, Status, utcnow
-from .processing import Engine, run_deteksi, run_versi
+from .models import Document, Job, JobKind, JobState, Status, new_id, utcnow
+from .processing import (
+    Engine, Touch, apply_deteksi, compute_deteksi, render_versi, store_versi,
+)
 from .storage import FileStore
 
-__all__ = ["Engine", "Worker", "claim", "enqueue", "run_job", "run_pending"]
+__all__ = ["Engine", "Worker", "claim", "heartbeat", "enqueue", "run_job", "run_pending"]
 
 log = logging.getLogger("digitadlp.jobs")
 
@@ -38,9 +43,10 @@ def _claimable(cutoff):
 
 
 def claim(db: Session, stale_minutes: int) -> Job | None:
-    """Ambil satu job lalu tandai berjalan (commit). None bila tidak ada."""
+    """Ambil satu job, tandai berjalan dengan claim_token baru (commit)."""
     now = utcnow()
     cond = _claimable(now - timedelta(minutes=stale_minutes))
+    token = new_id()
     if db.get_bind().dialect.name == "postgresql":
         job = db.scalars(
             select(Job).where(cond).order_by(Job.created_at)
@@ -51,6 +57,7 @@ def claim(db: Session, stale_minutes: int) -> Job | None:
             return None
         job.state = JobState.BERJALAN
         job.claimed_at = now
+        job.claim_token = token
         db.commit()
         return job
     for _ in range(5):
@@ -61,7 +68,7 @@ def claim(db: Session, stale_minutes: int) -> Job | None:
         res = db.execute(
             update(Job)
             .where(Job.id == job_id, cond)
-            .values(state=JobState.BERJALAN, claimed_at=now)
+            .values(state=JobState.BERJALAN, claimed_at=now, claim_token=token)
             .execution_options(synchronize_session=False)
         )
         db.commit()
@@ -70,6 +77,32 @@ def claim(db: Session, stale_minutes: int) -> Job | None:
             db.refresh(job)
             return job
     return None
+
+
+class ClaimLost(Exception):
+    """Klaim job sudah diambil alih runner lain."""
+
+
+def heartbeat(db: Session, job_id: str, token: str | None, interval: float = 60.0) -> Touch:
+    """touch(): perbarui claimed_at paling sering tiap `interval` detik."""
+    last = {"t": time.monotonic()}
+
+    def touch() -> None:
+        now = time.monotonic()
+        if interval > 0 and now - last["t"] < interval:
+            return
+        res = db.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.claim_token == token, Job.state == JobState.BERJALAN)
+            .values(claimed_at=utcnow())
+            .execution_options(synchronize_session=False)
+        )
+        db.commit()
+        if res.rowcount != 1:
+            raise ClaimLost()
+        last["t"] = now
+
+    return touch
 
 
 def _log_failure(job_id: str, kind: str, code: str, exc: BaseException) -> None:
@@ -81,39 +114,88 @@ def _log_failure(job_id: str, kind: str, code: str, exc: BaseException) -> None:
     )
 
 
-def run_job(db: Session, store: FileStore, engine: Engine, job: Job) -> None:
+def _fresh_doc(db: Session, doc_id: str) -> Document | None:
+    return db.scalars(
+        select(Document).where(Document.id == doc_id)
+        .with_for_update().execution_options(populate_existing=True)
+    ).first()
+
+
+def _finalize(db, job_id, token, revision, doc_id, state, code, apply) -> bool:
+    """Tulis hasil job secara atomik. Job ditulis lewat UPDATE bersyarat pada
+    claim_token (juga mengunci tulis di SQLite); dokumen dikunci lalu revisinya
+    diperiksa ulang. apply(doc) hanya dipanggil bila revisi masih sama.
+    False bila klaim hilang (tanpa efek apa pun)."""
+    res = db.execute(
+        update(Job)
+        .where(Job.id == job_id, Job.claim_token == token, Job.state == JobState.BERJALAN)
+        .values(state=state, error_code=code)
+        .execution_options(synchronize_session=False)
+    )
+    if res.rowcount != 1:
+        db.rollback()
+        return False
+    doc = _fresh_doc(db, doc_id)
+    if doc is not None and doc.revision == revision and apply is not None:
+        try:
+            apply(doc)
+        except BaseException:
+            db.rollback()
+            raise
+    elif state == JobState.SELESAI and apply is not None:
+        log.info("job basi id=%s", job_id)
+    db.commit()
+    return True
+
+
+def run_job(
+    db: Session, store: FileStore, engine: Engine, job: Job, touch: Touch | None = None
+) -> None:
     job_id, kind = job.id, JobKind(job.kind)
+    token, revision, doc_id = job.claim_token, job.revision, job.document_id
+    if touch is None:
+        touch = heartbeat(db, job_id, token)
     try:
-        doc = db.get(Document, job.document_id)
-        if doc is None or doc.revision != job.revision:
-            job.state = JobState.SELESAI
-            db.commit()
-            log.info("job basi id=%s kind=%s", job_id, kind.value)
+        doc = _fresh_doc(db, doc_id)
+        if doc is None or doc.revision != revision:
+            db.rollback()
+            if _finalize(db, job_id, token, revision, doc_id, JobState.SELESAI, None, None):
+                log.info("job basi id=%s kind=%s", job_id, kind.value)
             return
+        db.rollback()  # jangan tahan kunci selama pemrosesan panjang
         if kind == JobKind.DETEKSI:
-            run_deteksi(db, store, engine, doc)
+            result = compute_deteksi(db, store, engine, doc, touch)
+            db.rollback()
+            ok = _finalize(db, job_id, token, revision, doc_id, JobState.SELESAI, None,
+                           lambda d: apply_deteksi(db, d, result))
         else:
-            run_versi(db, store, engine, doc)
-        job.state = JobState.SELESAI
-        job.error_code = None
-        db.commit()
-        log.info("job selesai id=%s kind=%s", job_id, kind.value)
+            with tempfile.TemporaryDirectory(prefix="digitadlp-") as tmp:
+                files = render_versi(db, store, engine, doc, Path(tmp), touch)
+                db.rollback()
+                ok = _finalize(db, job_id, token, revision, doc_id, JobState.SELESAI, None,
+                               lambda d: store_versi(store, d, files))
+        if ok:
+            log.info("job selesai id=%s kind=%s", job_id, kind.value)
+        else:
+            log.warning("klaim hilang id=%s kind=%s", job_id, kind.value)
+        return
+    except ClaimLost:
+        db.rollback()
+        log.warning("klaim hilang id=%s kind=%s", job_id, kind.value)
         return
     except Exception as exc:  # noqa: BLE001
         code = "dokumen_rusak" if isinstance(exc, DocumentError) else "galat_internal"
         failure = exc
     db.rollback()
     _log_failure(job_id, kind.value, code, failure)
+
+    def mark_failed(d: Document) -> None:
+        if kind == JobKind.VERSI:
+            store.delete_versions(d.id)
+        d.status = Status.GAGAL
+
     try:
-        job = db.get(Job, job_id)
-        doc = db.get(Document, job.document_id)
-        if kind == JobKind.VERSI and doc is not None:
-            store.delete_versions(doc.id)
-        job.state = JobState.GAGAL
-        job.error_code = code
-        if doc is not None and doc.revision == job.revision:
-            doc.status = Status.GAGAL
-        db.commit()
+        _finalize(db, job_id, token, revision, doc_id, JobState.GAGAL, code, mark_failed)
     except Exception as exc2:  # noqa: BLE001
         db.rollback()
         _log_failure(job_id, kind.value, "galat_internal", exc2)
