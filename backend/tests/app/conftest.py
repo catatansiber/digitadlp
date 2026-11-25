@@ -1,4 +1,5 @@
 import pytest
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -24,7 +25,7 @@ def db():
 @pytest.fixture
 def app_settings(tmp_path):
     return Settings(
-        fernet_key="x",
+        fernet_key=Fernet.generate_key().decode(),
         database_url="sqlite://",
         storage_dir=str(tmp_path / "storage"),
         cookie_secure=False,
