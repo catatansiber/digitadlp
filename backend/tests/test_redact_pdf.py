@@ -216,3 +216,126 @@ def test_tessdata_missing_raises(monkeypatch):
     monkeypatch.setattr(pdfmod.subprocess, "run", boom)
     with pytest.raises(DocumentError, match="tessdata"):
         pdfmod._tessdata()
+
+
+# ---------------------------------------------------------------- final review fixes
+
+
+def _all_bytes(path):
+    d = fitz.open(path)
+    out = [path.read_bytes()]
+    for x in range(1, d.xref_length()):
+        try:
+            out.append(d.xref_object(x).encode())
+            s = d.xref_stream(x)
+            if s:
+                out.append(s)
+        except Exception:
+            pass
+    d.close()
+    return b"\n".join(out)
+
+
+@pytest.mark.parametrize("version", [Version.PUBLIK, Version.INTERNAL])
+def test_outline_and_annotation_pii_removed(make_pdf, tmp_path, version):
+    src = make_pdf("Surat edaran biasa")
+    d = fitz.open(src)
+    d.set_toc([[1, f"Lampiran NIK {NIK}", 1]])
+    a = d[0].add_text_annot((300, 300), f"Catatan NIK {NIK}")
+    a.set_info(title=f"NIK {NIK}")
+    a.update()
+    d.set_metadata({"author": f"NIK {NIK}", "title": "x"})
+    d.embfile_add(f"nik-{NIK}.txt", b"data")
+    w = fitz.Widget()
+    w.field_name = "nik"
+    w.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+    w.field_value = NIK
+    w.rect = fitz.Rect(300, 400, 500, 420)
+    d[0].add_widget(w)
+    tmp = tmp_path / "in.pdf"
+    d.save(tmp)
+    d.close()
+    out = tmp_path / "out.pdf"
+    redact_pdf(tmp, out, _findings(extract_pdf_text(tmp)), version)
+    r = fitz.open(out)
+    assert all(NIK not in t[1] for t in r.get_toc())
+    for an in r[0].annots() or []:
+        assert NIK not in an.info.get("content", "") and NIK not in an.info.get("title", "")
+    assert not list(r[0].widgets() or [])
+    assert NIK not in str(r.metadata) and NIK not in (r.get_xml_metadata() or "")
+    assert not r.embfile_names()
+    if version == Version.INTERNAL:
+        assert any("6474********0002" in t[1] for t in r.get_toc())
+    r.close()
+    assert NIK.encode() not in _all_bytes(out)
+
+
+def _text_page_with_small_image(tmp_path, img_text):
+    import io
+
+    from PIL import Image, ImageDraw
+
+    from tests.conftest import _font
+    img = Image.new("RGB", (1200, 140), "white")
+    ImageDraw.Draw(img).text((20, 30), img_text, fill="black", font=_font(64))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    path = tmp_path / "small.pdf"
+    d = fitz.open()
+    page = d.new_page(width=595, height=842)
+    page.insert_text((72, 72), "Surat keterangan biasa tanpa data", fontsize=12)
+    page.insert_image(fitz.Rect(72, 300, 372, 335), stream=buf.getvalue())
+    d.save(path)
+    d.close()
+    return path
+
+
+def test_small_image_on_text_page_ocrd(tmp_path):
+    from digitadlp.redact.pdf import _kind, _ocr_text
+    src = _text_page_with_small_image(tmp_path, f"NIK {NIK}")
+    d = fitz.open(src)
+    assert _kind(d[0]) == "text"
+    d.close()
+    pages = extract_pdf_text(src)
+    assert NIK in pages[0].replace(" ", "")
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, _findings(pages), Version.PUBLIK)
+    r = fitz.open(out)
+    assert NIK not in _ocr_text(r[0]).replace(" ", "")
+
+
+def test_short_address_tokens_removed(make_pdf, tmp_path):
+    from digitadlp.models import Finding
+    src = make_pdf("Alamat Jl. Pupuk Raya\nRT 05 No 7\nPasal 12 berlaku")
+    t = extract_pdf_text(src)[0]
+    s = t.index("Jl.")
+    e = t.index("No 7") + 4
+    f = Finding(Kind.ADDRESS, s, e, t[s:e], "test")
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, [[f]], Version.PUBLIK)
+    text = fitz.open(out)[0].get_text()
+    assert "RT 05" not in text and "No 7" not in text and "Pupuk" not in text
+    assert "Pasal 12" in text
+
+
+def test_short_token_unlocatable_fails_closed(make_pdf, tmp_path):
+    from digitadlp.models import Finding
+    src = make_pdf("Alamat Jl. Pupuk Raya")
+    f = Finding(Kind.ADDRESS, 0, 10, "Pupuk Raya\nRT 99", "test")
+    with pytest.raises(DocumentError):
+        redact_pdf(src, tmp_path / "o.pdf", [[f]], Version.PUBLIK)
+
+
+@pytest.mark.parametrize("exc", ["notfound", "tess", "os"])
+def test_ocr_errors_become_document_error(make_scanned_pdf, monkeypatch, exc):
+    import pytesseract
+
+    def boom(*a, **k):
+        if exc == "notfound":
+            raise pytesseract.TesseractNotFoundError()
+        if exc == "tess":
+            raise pytesseract.TesseractError(1, "bad")
+        raise OSError("x")
+    monkeypatch.setattr(pytesseract, "image_to_string", boom)
+    with pytest.raises(DocumentError):
+        extract_pdf_text(make_scanned_pdf(f"NIK {NIK}"))

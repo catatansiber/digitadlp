@@ -17,14 +17,13 @@ import zipfile
 from pathlib import Path
 from typing import Callable
 
-import pytesseract
 from lxml import etree
 from PIL import Image
 
 from ..detect.patterns import find_patterns
 from ..models import Action, Finding, Kind, Version
 from ..policy import action_for, mask_value, placeholder
-from .pdf import OCR_LANG, DocumentError, _leaks
+from .pdf import OCR_LANG, DocumentError, _leaks, _tess
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
@@ -151,14 +150,50 @@ def _xml_names(parts: dict[str, bytes]) -> list[str]:
             or _is_xml_type(types.get(n, ""))]
 
 
-def _value_targets(parts, detect_fn, version) -> list[Finding]:
+def _value_findings(parts, detect_fn) -> list[Finding]:
     out = []
     for name in _xml_names(parts):
         for v, human in _units(_parse(parts[name], name)):
             if len(v.strip()) >= 4:
                 fn = detect_fn if human else find_patterns
-                out += [f for f in fn(v) if action_for(f, version) != Action.KEEP]
+                out += fn(v)
     return out
+
+
+def _ocr_image(img: Image.Image) -> str:
+    return _tess("image_to_string", img.convert("RGB"), lang=OCR_LANG)
+
+
+def _image_names(parts, types) -> list[str]:
+    return [n for n in parts if types.get(n, "").lower().startswith("image/")
+            or n.startswith("word/media/")]
+
+
+def _image_findings(parts, detect_fn, types) -> list[Finding]:
+    out = []
+    for name in _image_names(parts, types):
+        if not name.lower().endswith(_IMAGE_EXT):
+            raise DocumentError(f"cannot inspect embedded media {name}")
+        try:
+            img = Image.open(io.BytesIO(parts[name]))
+            img.load()
+        except Exception as e:  # PIL raises many types
+            raise DocumentError(f"cannot read embedded image {name}: {e}") from e
+        out += detect_fn(_ocr_image(img))
+    return out
+
+
+def _detect_parts(parts, detect_fn) -> list[Finding]:
+    types = _content_types(parts)
+    return ([f for t in _paragraph_texts(parts) for f in detect_fn(t)]
+            + _value_findings(parts, detect_fn)
+            + _image_findings(parts, detect_fn, types))
+
+
+def detect_docx(path: Path, detect_fn: DetectFn) -> list[Finding]:
+    """every finding in a DOCX: paragraphs, attribute/property values (regex
+    only for structural attributes) and OCR of embedded images"""
+    return _detect_parts(_read(Path(path)), detect_fn)
 
 
 def _content_types(parts: dict[str, bytes]) -> dict[str, str]:
@@ -376,8 +411,7 @@ def _clear_app(parts: dict[str, bytes]) -> None:
 
 def _redact_images(parts: dict[str, bytes], detect_fn: DetectFn,
                    version: Version, types: dict[str, str]) -> None:
-    for name in [n for n in parts if types.get(n, "").lower().startswith("image/")
-                 or n.startswith("word/media/")]:
+    for name in _image_names(parts, types):
         if not name.lower().endswith(_IMAGE_EXT):
             raise DocumentError(f"cannot inspect embedded media {name}")
         try:
@@ -385,7 +419,7 @@ def _redact_images(parts: dict[str, bytes], detect_fn: DetectFn,
             img.load()
         except Exception as e:  # PIL raises many types
             raise DocumentError(f"cannot read embedded image {name}: {e}") from e
-        text = pytesseract.image_to_string(img.convert("RGB"), lang=OCR_LANG)
+        text = _ocr_image(img)
         if not any(action_for(f, version) != Action.KEEP for f in detect_fn(text)):
             continue
         fmt = img.format or "PNG"
@@ -437,9 +471,8 @@ def redact_docx(src: Path, dst: Path, detect_fn: DetectFn, version: Version) -> 
         return cache[t]
 
     # leak-check targets come from the untouched input, independent of rewrite
-    targets = [f for t in _paragraph_texts(parts) for f in detect_fn(t)
+    targets = [f for f in _detect_parts(parts, detect_fn)
                if action_for(f, version) != Action.KEEP]
-    targets += _value_targets(parts, detect_fn, version)
     removed = {n for n in parts if n.startswith("docProps/thumbnail")}
     if publik:
         removed |= {n for n in parts

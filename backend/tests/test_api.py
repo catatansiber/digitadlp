@@ -122,9 +122,9 @@ def test_versions_docerror_422_no_partial(client, make_pdf, storage, monkeypatch
     calls = {"n": 0}
     real = api.redact_pdf
 
-    def boom(src, dst, fpp, version):
+    def boom(src, dst, fpp, version, *a):
         calls["n"] += 1
-        real(src, dst, fpp, version)
+        real(src, dst, fpp, version, *a)
         if calls["n"] == 2:
             raise DocumentError(f"leak {NIK}")
 
@@ -134,3 +134,39 @@ def test_versions_docerror_422_no_partial(client, make_pdf, storage, monkeypatch
     assert r.json() == {"detail": MSG}
     assert NIK not in r.text
     assert sorted(x.name for x in (storage / doc_id).iterdir()) == ["source.pdf"]
+
+
+def test_docx_core_title_only_suggests_rahasia(client, tmp_path):
+    from docx import Document
+    doc = Document()
+    doc.add_paragraph("Surat biasa")
+    doc.core_properties.title = f"NIK {NIK}"
+    p = tmp_path / "t.docx"
+    doc.save(p)
+    r = client.post("/documents", files={"file": ("a.docx", p.read_bytes(), "application/octet-stream")})
+    assert r.status_code == 201
+    assert r.json()["suggested_label"] == "rahasia"
+    assert any(f["kind"] == "NIK" for f in r.json()["findings"])
+
+
+def test_ocr_missing_upload_422(client, make_scanned_pdf, monkeypatch, storage):
+    import pytesseract
+
+    def boom(*a, **k):
+        raise pytesseract.TesseractNotFoundError()
+    monkeypatch.setattr(pytesseract, "image_to_string", boom)
+    r = _upload(client, make_scanned_pdf(f"NIK {NIK}"))
+    assert r.status_code == 422 and r.json()["detail"] == MSG
+
+
+def test_ocr_missing_docx_versions_422(client, make_docx, monkeypatch):
+    import pytesseract
+    p = make_docx(image=True)
+    r = client.post("/documents", files={"file": ("a.docx", p.read_bytes(), "application/octet-stream")})
+    doc_id = r.json()["id"]
+
+    def boom(*a, **k):
+        raise OSError("no tesseract")
+    monkeypatch.setattr(pytesseract, "image_to_string", boom)
+    r = client.post(f"/documents/{doc_id}/versions")
+    assert r.status_code == 422 and r.json()["detail"] == MSG

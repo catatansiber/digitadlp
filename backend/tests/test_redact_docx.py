@@ -391,3 +391,13 @@ def test_redact_string_overlapping_findings():
     out = docxmod._redact_string(s, lambda t: [a, b], Version.PUBLIK, [])
     assert out == "x [NIK][HP]"
     assert not re.search(r"\d", out)
+
+
+def test_detect_docx_covers_core_props_and_images(make_docx):
+    from digitadlp.redact.docx import detect_docx
+    from digitadlp.detect.patterns import find_patterns
+    p = make_docx(image=True)
+    found = detect_docx(p, find_patterns)
+    texts = {f.text.replace(" ", "") for f in found}
+    assert "3201010101010003" in texts
+    assert any(DOCX_NIK in t for t in texts)

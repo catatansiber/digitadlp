@@ -15,8 +15,8 @@ from .detect.ner import NerDetector
 from .detect.pipeline import detect
 from .models import Finding, Version
 from .policy import suggest_label
-from .redact.docx import extract_docx_text, redact_docx
-from .redact.pdf import DocumentError, extract_pdf_text, redact_pdf
+from .redact.docx import detect_docx, redact_docx
+from .redact.pdf import DocumentError, extract_pdf_extras, extract_pdf_text, redact_pdf
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 ALLOWED_EXT = (".pdf", ".docx")
@@ -50,10 +50,17 @@ def create_app(ner: NerDetector, directory: EmployeeDirectory, storage: Path) ->
                 return p
         raise HTTPException(404, "Dokumen tidak ditemukan.")
 
+    def detect_fn(t: str) -> list[Finding]:
+        return detect(t, ner, directory)
+
     def run_detect(d: Path) -> list[list[Finding]]:
         src = source_of(d)
-        pages = extract_pdf_text(src) if src.suffix == ".pdf" else extract_docx_text(src)
-        return [detect(t, ner, directory) for t in pages]
+        if src.suffix == ".pdf":
+            return [detect_fn(t) for t in extract_pdf_text(src)]
+        return [detect_docx(src, detect_fn)]
+
+    def pdf_extra_findings(d: Path) -> list[Finding]:
+        return [f for t in extract_pdf_extras(source_of(d)) for f in detect_fn(t)]
 
     @app.post("/documents", status_code=201)
     def upload(file: UploadFile = File(...)):
@@ -69,13 +76,14 @@ def create_app(ner: NerDetector, directory: EmployeeDirectory, storage: Path) ->
         try:
             (d / f"source{ext}").write_bytes(data)
             per_page = run_detect(d)
+            extra = pdf_extra_findings(d) if ext == ".pdf" else []
         except DocumentError:
             shutil.rmtree(d, ignore_errors=True)
             raise HTTPException(422, DOC_ERROR) from None
         except BaseException:
             shutil.rmtree(d, ignore_errors=True)
             raise
-        findings = [f for page in per_page for f in page]
+        findings = [f for page in per_page for f in page] + extra
         return {
             "id": doc_id,
             "suggested_label": suggest_label(findings).value,
@@ -83,6 +91,9 @@ def create_app(ner: NerDetector, directory: EmployeeDirectory, storage: Path) ->
                 {"kind": f.kind.value, "text": f.text, "start": f.start, "end": f.end, "page": i}
                 for i, page in enumerate(per_page)
                 for f in page
+            ] + [
+                {"kind": f.kind.value, "text": f.text, "start": f.start, "end": f.end, "page": None}
+                for f in extra
             ],
         }
 
@@ -98,9 +109,9 @@ def create_app(ner: NerDetector, directory: EmployeeDirectory, storage: Path) ->
                 for v in VERSIONS:
                     dst = tmp / f"{v}{ext}"
                     if ext == ".pdf":
-                        redact_pdf(src, dst, per_page, Version(v))
+                        redact_pdf(src, dst, per_page, Version(v), detect_fn)
                     else:
-                        redact_docx(src, dst, lambda t: detect(t, ner, directory), Version(v))
+                        redact_docx(src, dst, detect_fn, Version(v))
                 for v in VERSIONS:
                     (tmp / f"{v}{ext}").replace(d / f"{v}{ext}")
             except DocumentError:
