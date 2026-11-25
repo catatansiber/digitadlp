@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -37,6 +38,8 @@ class FileStore:
             ) from None
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        # Sisa file terdekripsi dari proses yang crash tidak boleh tertinggal.
+        self.purge_tmp(older_than_seconds=0)
 
     def _path(self, doc_id: str, name: str) -> Path:
         _check(doc_id, name)
@@ -87,6 +90,22 @@ class FileStore:
                     self._path(doc_id, f"{v}.{ext}").unlink()
                 except FileNotFoundError:
                     pass
+
+    def purge_tmp(self, older_than_seconds: int = 3600) -> int:
+        """Hapus file sementara di root/.tmp yang lebih tua dari batas. Mengembalikan jumlah terhapus."""
+        tmpdir = self.root / ".tmp"
+        if not tmpdir.is_dir():
+            return 0
+        cutoff = time.time() - older_than_seconds
+        removed = 0
+        for f in tmpdir.iterdir():
+            try:
+                if f.is_file() and (older_than_seconds <= 0 or f.stat().st_mtime <= cutoff):
+                    f.unlink()
+                    removed += 1
+            except FileNotFoundError:
+                pass
+        return removed
 
     @contextmanager
     def decrypted(self, doc_id: str, name: str) -> Iterator[Path]:

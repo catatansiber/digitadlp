@@ -120,3 +120,23 @@ def test_put_overwrites_atomically(store, tmp_path):
     store.put(DOC, "source.pdf", b"2")
     assert store.get(DOC, "source.pdf") == b"2"
     assert [f.name for f in (tmp_path / "files" / DOC).iterdir()] == ["source.pdf.enc"]
+
+
+def test_init_purges_leftover_tmp(tmp_path, key):
+    tmp = tmp_path / "files" / ".tmp"
+    tmp.mkdir(parents=True)
+    (tmp / "sisa.pdf").write_bytes(NIK)
+    FileStore(tmp_path / "files", key)
+    assert list(tmp.iterdir()) == []
+
+
+def test_purge_tmp_older_than(store, tmp_path):
+    tmp = tmp_path / "files" / ".tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+    old, new = tmp / "old.pdf", tmp / "new.pdf"
+    old.write_bytes(b"x")
+    new.write_bytes(b"x")
+    past = old.stat().st_mtime - 7200
+    os.utime(old, (past, past))
+    assert store.purge_tmp(older_than_seconds=3600) == 1
+    assert not old.exists() and new.exists()
