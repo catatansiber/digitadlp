@@ -7,6 +7,7 @@ export function uploadDocument<T>(
   file: File,
   onProgress?: (fraction: number) => void,
   signal?: AbortSignal,
+  path = "/documents",
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     if (signal?.aborted) return reject(new ApiError(0, FALLBACK_MESSAGE));
@@ -14,7 +15,7 @@ export function uploadDocument<T>(
     xhr.timeout = UPLOAD_TIMEOUT_MS;
     xhr.ontimeout = () => reject(new ApiError(0, "Unggahan terlalu lama. Coba lagi."));
     signal?.addEventListener("abort", () => xhr.abort(), { once: true });
-    xhr.open("POST", new URL("/api/documents", window.location.href).toString());
+    xhr.open("POST", new URL("/api" + path, window.location.href).toString());
     xhr.setRequestHeader("Accept", "application/json");
     xhr.withCredentials = true;
     xhr.responseType = "text";

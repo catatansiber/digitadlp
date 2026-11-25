@@ -9,6 +9,7 @@ import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { Upload } from "./pages/Upload";
 import { Placeholder } from "./pages/Placeholder";
+import { Review } from "./pages/Review";
 
 function on401(err: unknown) {
   if (err instanceof ApiError && err.status === 401) emitSessionExpired();
@@ -50,7 +51,7 @@ export function AppRoutes() {
             </RequireRole>
           }
         />
-        <Route path="dokumen/:id" element={<Placeholder title="Cek temuan" />} />
+        <Route path="dokumen/:id" element={<Review />} />
         <Route path="dokumen/:id/versi" element={<Placeholder title="Versi dokumen" />} />
         <Route path="admin/pengguna" element={admin("Pengguna")} />
         <Route path="admin/unit" element={admin("Unit")} />

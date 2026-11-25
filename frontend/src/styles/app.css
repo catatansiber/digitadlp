@@ -68,3 +68,23 @@ td a{color:var(--accent);font-weight:600;overflow-wrap:anywhere}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;inset:0}
 .progress-wrap{display:flex;gap:8px;align-items:center}
 .progress-wrap progress{flex:1;accent-color:var(--accent)}
+
+/* Cek temuan */
+.split{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px}
+@media (max-width:760px){.split{grid-template-columns:1fr}}
+.doc{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:20px;font-size:14px;line-height:1.9;min-width:0;overflow-wrap:anywhere;white-space:pre-wrap}
+.doc-page+.doc-page{margin-top:16px;padding-top:12px;border-top:1px dashed var(--line)}
+mark{background:var(--mark);color:inherit;padding:0 3px;border-radius:3px;border-bottom:2px solid var(--int)}
+mark.strong{border-bottom-color:var(--rah)}
+mark.employee{border-bottom-color:var(--pub)}
+.find{display:grid;gap:8px;align-content:start;min-width:0}
+.suggest{border-left:4px solid var(--rah);background:var(--rah-soft);border-radius:6px;padding:12px;display:grid;gap:4px;font-size:13px}
+.f-group{display:grid;gap:6px}
+.f-group h3{font-size:12px}
+.f{display:grid;grid-template-columns:1fr auto;gap:4px 8px;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--surface)}
+.f .t{font-weight:600}
+.f-v{font-family:var(--f-mono);color:var(--muted);grid-column:1/-1;overflow-wrap:anywhere}
+.f-act{grid-column:1/-1;justify-self:start;padding:4px 10px;font-size:13px}
+.manual,.dialog{display:grid;gap:8px;border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--surface)}
+.field select,.field textarea{font:inherit;font-weight:400;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:100%}
+.doc-title{font-size:17px;overflow-wrap:anywhere;min-width:0}
