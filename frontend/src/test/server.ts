@@ -10,4 +10,11 @@ export const meUnauth = http.get("/api/auth/me", () =>
 );
 export const meAs = (u: Me) => http.get("/api/auth/me", () => HttpResponse.json(u));
 
-export const server = setupServer(meUnauth);
+// Bawaan: detail dokumen tidak ada, agar tes lain tidak membuat permintaan tak tertangani.
+export const docMissing = http.get("/api/documents/:id", () =>
+  HttpResponse.json({ detail: "Dokumen tidak ditemukan." }, { status: 404 }),
+);
+
+export const noDocs = http.get("/api/documents", () => HttpResponse.json([]));
+
+export const server = setupServer(meUnauth, docMissing, noDocs);

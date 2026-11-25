@@ -152,3 +152,41 @@ test("approved shows three-versions link", async () => {
   await open(reviewer);
   expect(await screen.findByRole("link", { name: "Lihat tiga versi" })).toHaveAttribute("href", "/dokumen/d1/versi");
 });
+
+test("disetujui still allows corrections with warning", async () => {
+  doc = { ...base, status: "disetujui" };
+  await open(reviewer);
+  expect(await screen.findByText("Mengubah temuan membatalkan persetujuan.")).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Abaikan" }).length).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: "+ Tandai manual" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Setujui & buat versi" })).toBeNull();
+});
+
+test("docx manual add sends page 0", async () => {
+  doc = { ...base, ext: "docx", findings: [base.findings[0]] };
+  await open(reviewer);
+  await screen.findByText("Hal dua");
+  vi.spyOn(window, "getSelection").mockReturnValue({ toString: () => "Hal dua" } as unknown as Selection);
+  await userEvent.click(screen.getByRole("button", { name: "+ Tandai manual" }));
+  expect(screen.queryByLabelText("Halaman")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Simpan temuan" }));
+  await waitFor(() =>
+    expect(posts).toContainEqual({ path: "corrections", body: { op: "tambah", kind: "NAME_CITIZEN", text: "Hal dua", page: 0 } }),
+  );
+  vi.restoreAllMocks();
+});
+
+test("label select shows placeholder when no label", async () => {
+  doc = { ...base, label: null, suggested_label: null };
+  await open(reviewer);
+  const sel = (await screen.findByLabelText("Label")) as HTMLSelectElement;
+  expect(sel.value).toBe("");
+  expect(screen.getByRole("option", { name: "Pilih label" })).toBeDisabled();
+});
+
+test("diproses shows processing message", async () => {
+  doc = { ...base, status: "diproses", findings: [] };
+  await open(reviewer);
+  expect(await screen.findByText("Dokumen masih diproses…")).toBeInTheDocument();
+  expect(textCalls).toBe(0);
+});
