@@ -44,22 +44,57 @@ def _stub(entities_by_chunk):
     return ner, calls
 
 
+def _ents(text, spans):
+    """spans: list of (label, substring) -> pipeline-shaped entities."""
+    out = []
+    for label, sub in spans:
+        i = text.index(sub)
+        out.append({"entity_group": label, "start": i, "end": i + len(sub)})
+    return out
+
+
+def _run(text, spans):
+    ner, _ = _stub(lambda c: _ents(text, spans))
+    return [(f.kind, f.text) for f in ner.find(text)]
+
+
 def test_indobert_labels_and_prefix_strip():
-    text = "Siti di Bontang oleh Acme"
-    ents = [
-        {"entity_group": "PER", "start": 0, "end": 4},
-        {"entity_group": "B-LOC", "start": 8, "end": 15},
-        {"entity_group": "I-GPE", "start": 8, "end": 15},
-        {"entity_group": "ORG", "start": 21, "end": 25},
-    ]
-    ner, _ = _stub(lambda c: ents)
-    out = ner.find(text)
-    assert [(f.kind, f.text) for f in out] == [
+    text = "Siti di Jl. Pupuk Raya oleh Acme"
+    out = _run(text, [("PER", "Siti"), ("B-LOC", "Jl. Pupuk Raya"),
+                      ("I-FAC", "Jl. Pupuk Raya"), ("ORG", "Acme")])
+    assert out == [
         (Kind.NAME_CITIZEN, "Siti"),
-        (Kind.ADDRESS, "Bontang"),
-        (Kind.ADDRESS, "Bontang"),
+        (Kind.ADDRESS, "Jl. Pupuk Raya"),
+        (Kind.ADDRESS, "Jl. Pupuk Raya"),
     ]
-    assert all(f.source == "ner" for f in out)
+
+
+def test_city_and_public_building_not_address():
+    text = "Rapat di Gedung Auditorium Taman 3 Dimensi, Kota Bontang dan Samarinda."
+    assert _run(text, [("FAC", "Gedung Auditorium Taman 3 Dimensi"), ("GPE", "Kota"),
+                       ("GPE", "Bontang"), ("GPE", "Samarinda")]) == []
+
+
+def test_street_address_cues_kept():
+    for addr in ["Jalan Mulawarman Nomor 21", "Gang Kenari II RT 05", "Perumahan Bukit Damai Blok C2",
+                 "Gg. Melati", "Komplek PKT No. 3", "Jln KS Tubun"]:
+        text = f"tinggal di {addr} sejak lama"
+        assert _run(text, [("LOC", addr)]) == [(Kind.ADDRESS, addr)], addr
+
+
+def test_kelurahan_kept_only_near_street_address():
+    text = "alamat Jl. Pupuk Raya RT 12 No. 8, Kelurahan Gunung Elai. Kantor di Kelurahan Api-Api."
+    out = _run(text, [("LOC", "Jl. Pupuk Raya RT 12 No. 8"), ("LOC", "Kelurahan Gunung Elai"),
+                      ("LOC", "Kelurahan Api-Api")])
+    assert out == [(Kind.ADDRESS, "Jl. Pupuk Raya RT 12 No. 8"),
+                   (Kind.ADDRESS, "Kelurahan Gunung Elai")]
+
+
+def test_honorific_alone_not_a_name():
+    text = "Ibu Rina Marlina dan Bapak hadir, Yth. Sdr. Teguh"
+    out = _run(text, [("PER", "Ibu"), ("PER", "Rina Marlina"), ("PER", "Bapak"),
+                      ("PER", "Yth. Sdr."), ("PER", "Teguh")])
+    assert out == [(Kind.NAME_CITIZEN, "Rina Marlina"), (Kind.NAME_CITIZEN, "Teguh")]
 
 
 def test_indobert_chunks_and_shifts_offsets():

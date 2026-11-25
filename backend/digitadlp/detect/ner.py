@@ -1,3 +1,4 @@
+import re
 from typing import Protocol
 
 from digitadlp.models import Finding, Kind
@@ -32,7 +33,48 @@ _LABELS = {
     "LOC": Kind.ADDRESS,
     "ADDRESS": Kind.ADDRESS,
     "GPE": Kind.ADDRESS,
+    "FAC": Kind.ADDRESS,
 }
+
+# A place is only a personal address when it names a home-level location;
+# city names and public buildings stay readable in published documents.
+_STREET_CUE = re.compile(
+    r"(?<![A-Za-z])(jl|jln|jalan|gg|gang|perumahan|perum|komplek|kompleks|blok|rt|rw|no|nomor)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+_AREA_CUE = re.compile(r"^\s*(kelurahan|kel|desa)(?![A-Za-z])", re.IGNORECASE)
+_AREA_NEAR = 3  # max gap (e.g. ", ") between a street address and its kelurahan/desa
+_HONORIFICS = frozenset(
+    {"ibu", "bapak", "bpk", "bu", "pak", "sdr", "sdri", "saudara", "saudari",
+     "yth", "tuan", "nyonya", "ny", "nona", "almarhum", "alm", "almarhumah", "almh"}
+)
+
+
+def _is_honorific_only(text: str) -> bool:
+    words = [w for w in re.split(r"[\s.,]+", text.casefold()) if w]
+    return bool(words) and all(w in _HONORIFICS for w in words)
+
+
+def _refine(findings: list[Finding]) -> list[Finding]:
+    """Drop NER hits that are not personal data: bare honorifics, and places
+    without a home-address cue (a kelurahan/desa counts only right after one)."""
+    findings = sorted(findings, key=lambda f: f.start)
+    streets = [f for f in findings if f.kind == Kind.ADDRESS and _STREET_CUE.search(f.text)]
+    out: list[Finding] = []
+    for f in findings:
+        if f.kind == Kind.NAME_CITIZEN:
+            if not _is_honorific_only(f.text):
+                out.append(f)
+        elif f.kind == Kind.ADDRESS:
+            if _STREET_CUE.search(f.text):
+                out.append(f)
+            elif _AREA_CUE.match(f.text) and any(
+                0 <= f.start - s.end <= _AREA_NEAR for s in streets
+            ):
+                out.append(f)
+        else:
+            out.append(f)
+    return out
 
 
 MAX_CHUNK = 1500
@@ -74,7 +116,7 @@ class IndoBertNer:
         out: list[Finding] = []
         for offset, chunk in _chunks(text):
             out.extend(self._find_chunk(chunk, offset))
-        return out
+        return _refine(out)
 
     def _find_chunk(self, text: str, offset: int) -> list[Finding]:
         out: list[Finding] = []

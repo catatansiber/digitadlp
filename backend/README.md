@@ -26,7 +26,28 @@ pip install huggingface_hub
 huggingface-cli download cahya/bert-base-indonesian-NER --local-dir ./models/indobert-ner
 ```
 
-lalu salin folder itu ke server. `cahya/bert-base-indonesian-NER` hanyalah contoh kandidat yang perlu Anda evaluasi sendiri; model harus berupa model *token classification* bahasa Indonesia dengan label entitas orang (PER).
+lalu salin folder itu ke server. Model harus berupa model *token classification* bahasa Indonesia dengan label entitas orang (PER). Pasang dependensinya dengan `pip install -e .[ner]` (untuk CPU, `torch` bisa dipasang dari `https://download.pytorch.org/whl/cpu`).
+
+### Hasil uji `cahya/bert-base-indonesian-NER` (25 November 2026)
+
+Diuji dengan `python scripts/eval_ner.py ./models/indobert-ner` pada 15 kalimat contoh bergaya dokumen pemerintah (data fiktif):
+
+| Ukuran | Hasil |
+|---|---|
+| Nama warga terdeteksi | 14 dari 14 |
+| Alamat rumah terdeteksi | 5 dari 5 |
+| Salah tandai sebagai nama | 0 |
+| Waktu muat model | ±4 detik |
+| Kecepatan (CPU) | ±36 ms per kalimat |
+
+Aturan yang diterapkan pada keluaran model:
+
+- Tempat (LOC, GPE, FAC) disensor sebagai alamat hanya jika memuat penanda alamat rumah: Jl., Jln, Jalan, Gg., Gang, Perumahan, Perum, Komplek, Blok, RT, RW, No., atau Nomor.
+- Kelurahan atau desa ikut disensor jika letaknya langsung setelah alamat rumah (hanya dipisah spasi atau koma).
+- Nama kota, nama kelurahan yang berdiri sendiri, dan gedung umum tidak disensor.
+- Sapaan yang berdiri sendiri (Ibu, Bapak, Sdr., Yth., dan sejenisnya) tidak dianggap nama.
+
+Lima belas kalimat terlalu sedikit untuk jaminan. Sebelum dipakai, jalankan skrip yang sama pada contoh dokumen asli instansi. Pemeriksa tetap wajib mengecek setiap dokumen sebelum rilis.
 
 ## Basis data (PostgreSQL) dan migrasi
 
