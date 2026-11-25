@@ -1,5 +1,5 @@
 import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { ApiError } from "./api/client";
 import { emitSessionExpired } from "./auth/sessionEvents";
 import { RequireAuth } from "./auth/RequireAuth";
@@ -11,6 +11,12 @@ import { Upload } from "./pages/Upload";
 import { Placeholder } from "./pages/Placeholder";
 import { Review } from "./pages/Review";
 import { Versions } from "./pages/Versions";
+import { AdminLayout } from "./pages/admin/AdminLayout";
+import { Audit } from "./pages/admin/Audit";
+import { Employees } from "./pages/admin/Employees";
+import { LabelRules } from "./pages/admin/LabelRules";
+import { Units } from "./pages/admin/Units";
+import { Users } from "./pages/admin/Users";
 
 function on401(err: unknown) {
   if (err instanceof ApiError && err.status === 401) emitSessionExpired();
@@ -25,12 +31,6 @@ export function makeQueryClient(): QueryClient {
     },
   });
 }
-
-const admin = (title: string) => (
-  <RequireRole roles={["admin"]}>
-    <Placeholder title={title} />
-  </RequireRole>
-);
 
 export function AppRoutes() {
   return (
@@ -54,11 +54,21 @@ export function AppRoutes() {
         />
         <Route path="dokumen/:id" element={<Review />} />
         <Route path="dokumen/:id/versi" element={<Versions />} />
-        <Route path="admin/pengguna" element={admin("Pengguna")} />
-        <Route path="admin/unit" element={admin("Unit")} />
-        <Route path="admin/pegawai" element={admin("Pegawai")} />
-        <Route path="admin/aturan-label" element={admin("Aturan label")} />
-        <Route path="admin/audit" element={admin("Audit")} />
+        <Route
+          path="admin"
+          element={
+            <RequireRole roles={["admin"]}>
+              <AdminLayout />
+            </RequireRole>
+          }
+        >
+          <Route index element={<Navigate to="pengguna" replace />} />
+          <Route path="pengguna" element={<Users />} />
+          <Route path="unit" element={<Units />} />
+          <Route path="pegawai" element={<Employees />} />
+          <Route path="aturan-label" element={<LabelRules />} />
+          <Route path="audit" element={<Audit />} />
+        </Route>
         <Route path="*" element={<Placeholder title="Halaman tidak ditemukan" />} />
       </Route>
     </Routes>
