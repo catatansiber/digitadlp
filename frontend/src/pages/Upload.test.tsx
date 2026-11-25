@@ -1,6 +1,6 @@
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { admin, meAs, server, uploader } from "../test/server";
+import { admin, meAs, meUnauth, server, uploader } from "../test/server";
 import { renderApp } from "../test/render";
 
 // jsdom + MSW: XHR dengan FormData berisi File/Blob tidak pernah selesai (batasan lingkungan uji),
@@ -41,15 +41,11 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function spyPost() {
-  return posts;
-}
 const input = () => screen.getByLabelText(/Pilih file/) as HTMLInputElement;
 const pick = (f: File) => userEvent.setup({ applyAccept: false }).upload(input(), f);
 
 test("upload rejects .txt client-side without request", async () => {
   server.use(meAs(uploader));
-  const posts = spyPost();
   renderApp("/upload");
   await screen.findByRole("heading", { name: "Unggah dokumen" });
   await pick(new File(["x"], "a.txt", { type: "text/plain" }));
@@ -59,7 +55,6 @@ test("upload rejects .txt client-side without request", async () => {
 
 test("upload rejects 51MB client-side", async () => {
   server.use(meAs(uploader));
-  const posts = spyPost();
   renderApp("/upload");
   await screen.findByRole("heading", { name: "Unggah dokumen" });
   const big = new File(["x"], "a.pdf", { type: "application/pdf" });
@@ -71,7 +66,6 @@ test("upload rejects 51MB client-side", async () => {
 
 test("upload rejects empty file", async () => {
   server.use(meAs(uploader));
-  const posts = spyPost();
   renderApp("/upload");
   await screen.findByRole("heading", { name: "Unggah dokumen" });
   await pick(new File([], "a.pdf", { type: "application/pdf" }));
@@ -81,7 +75,6 @@ test("upload rejects empty file", async () => {
 
 test("upload success navigates to review", async () => {
   server.use(meAs(uploader));
-  const posts = spyPost();
   renderApp("/upload");
   await screen.findByRole("heading", { name: "Unggah dokumen" });
   expect(screen.getByText("File diproses di server instansi. Tidak dikirim ke layanan luar.")).toBeInTheDocument();
@@ -100,6 +93,16 @@ test("server 422 detail shown", async () => {
   await screen.findByRole("heading", { name: "Unggah dokumen" });
   await pick(new File(["junk"], "a.pdf", { type: "application/pdf" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Dokumen terenkripsi atau rusak.");
+});
+
+test("upload 401 triggers session-expired flow", async () => {
+  server.use(meAs(uploader));
+  reply = { status: 401, body: { detail: "Sesi berakhir. Silakan masuk lagi." } };
+  renderApp("/upload");
+  await screen.findByRole("heading", { name: "Unggah dokumen" });
+  server.use(meUnauth);
+  await pick(new File(["%PDF-1.4"], "a.pdf", { type: "application/pdf" }));
+  expect(await screen.findByLabelText("Nama pengguna")).toBeInTheDocument();
 });
 
 test("pemeriksa may upload, admin may not", async () => {

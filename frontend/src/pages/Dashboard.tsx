@@ -21,6 +21,7 @@ export function Dashboard() {
   const [mine, setMine] = useState(false);
   const q = useDocuments({ status: status || undefined, mine });
   const docs = q.data ?? [];
+  const all = useDocuments({}).data ?? []; // ringkasan tidak ikut filter
   const canUpload = user?.role === "pengunggah" || user?.role === "pemeriksa";
 
   return (
@@ -37,7 +38,7 @@ export function Dashboard() {
         {KPI.map(([label, st]) => (
           <div key={st}>
             <span className="muted">{label}</span>
-            <b>{docs.filter((d) => d.status === st).length}</b>
+            <b>{all.filter((d) => d.status === st).length}</b>
           </div>
         ))}
       </div>

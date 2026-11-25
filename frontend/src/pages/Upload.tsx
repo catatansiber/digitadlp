@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../api/client";
 import { uploadDocument } from "../api/upload";
 import { Dropzone } from "../components/Dropzone";
@@ -25,7 +25,16 @@ export function Upload() {
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
 
-  async function onFile(f: File) {
+  const ac = useRef<AbortController | null>(null);
+  useEffect(() => () => ac.current?.abort(), []);
+  const m = useMutation({
+    mutationFn: (f: File) => {
+      ac.current = new AbortController();
+      return uploadDocument<{ id: string }>(f, setProgress, ac.current.signal);
+    },
+  });
+
+  function onFile(f: File) {
     const bad = validateFile(f);
     if (bad) {
       setError(bad);
@@ -33,20 +42,23 @@ export function Upload() {
     }
     setError(null);
     setProgress(0);
-    try {
-      const doc = await uploadDocument<{ id: string }>(f, setProgress);
-      void qc.invalidateQueries({ queryKey: ["documents"] });
-      nav(`/dokumen/${doc.id}`);
-    } catch (e) {
-      setProgress(null);
-      setError(e instanceof ApiError ? e.detail : "Terjadi kesalahan. Coba lagi.");
-    }
+    // Callback tingkat-mutate tidak dipanggil setelah unmount: tidak ada nav/setState liar.
+    m.mutate(f, {
+      onSuccess: (doc) => {
+        void qc.invalidateQueries({ queryKey: ["documents"] });
+        nav(`/dokumen/${doc.id}`);
+      },
+      onError: (e) => {
+        setProgress(null);
+        setError(e instanceof ApiError ? e.detail : "Terjadi kesalahan. Coba lagi.");
+      },
+    });
   }
 
   return (
     <section className="page">
       <h1>Unggah dokumen</h1>
-      <Dropzone onFile={(f) => void onFile(f)} disabled={progress !== null} />
+      <Dropzone onFile={onFile} disabled={progress !== null} />
       {progress !== null && (
         <div className="progress-wrap">
           <progress max={100} value={Math.round(progress * 100)} aria-label="Progres unggah" />

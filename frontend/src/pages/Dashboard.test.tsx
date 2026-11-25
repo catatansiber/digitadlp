@@ -91,3 +91,20 @@ test("polls while diproses, stops when done", async () => {
     vi.useRealTimers();
   }
 });
+
+test("KPI counts ignore the active filter", async () => {
+  server.use(
+    meAs(uploader),
+    http.get("/api/documents", ({ request }) => {
+      const st = new URL(request.url).searchParams.get("status");
+      const all = [doc({}), doc({ id: "d2", status: "gagal" })];
+      return HttpResponse.json(st ? all.filter((d) => d.status === st) : all);
+    }),
+  );
+  renderApp("/");
+  const u = userEvent.setup();
+  await u.selectOptions(await screen.findByLabelText("Status"), "gagal");
+  await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(2));
+  const kpi = screen.getByLabelText("Ringkasan");
+  expect(within(kpi).getByText("Menunggu cek").nextSibling).toHaveTextContent("1");
+});
