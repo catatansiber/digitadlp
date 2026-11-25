@@ -7,7 +7,7 @@ from datetime import timedelta
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .models import AuthSession, Role, User, utcnow
@@ -32,11 +32,15 @@ def verify_password(pw: str, h: str) -> bool:
         return False
 
 
+# Verified against when the username is unknown, so timing does not reveal it.
+DUMMY_HASH = _hasher.hash("digitadlp-dummy-password")
+
+
 def _digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def create_session(db: Session, user: User, hours: int = 8) -> str:
+def create_session(db: Session, user: User, hours: int) -> str:
     token = secrets.token_urlsafe(32)
     db.add(
         AuthSession(
@@ -47,6 +51,15 @@ def create_session(db: Session, user: User, hours: int = 8) -> str:
     )
     db.commit()
     return token
+
+
+def purge_expired(db: Session, user_id: str) -> None:
+    db.execute(
+        delete(AuthSession).where(
+            AuthSession.user_id == user_id, AuthSession.expires_at <= utcnow()
+        )
+    )
+    db.commit()
 
 
 def delete_session(db: Session, token: str) -> None:
@@ -74,15 +87,17 @@ class LoginThrottle:
             self._failures.pop(key, None)
         return recent
 
-    def is_locked(self, username: str) -> bool:
-        with self._lock:
-            return len(self._recent(username.lower())) >= self.max_failures
+    def reserve(self, username: str) -> bool:
+        """Atomically check the limit and count this attempt as a failure.
 
-    def record_failure(self, username: str) -> None:
+        Returns False when locked. Call reset() on a successful login.
+        """
         key = username.lower()
         with self._lock:
-            self._recent(key)
+            if len(self._recent(key)) >= self.max_failures:
+                return False
             self._failures.setdefault(key, []).append(time.time())
+            return True
 
     def reset(self, username: str) -> None:
         with self._lock:

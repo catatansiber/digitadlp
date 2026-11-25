@@ -191,3 +191,60 @@ def test_create_admin_cli(tmp_path, monkeypatch, capsys):
     assert main(["create-admin", "--username", "root", "--unit", "Diskominfo"]) == 1
     with make_session_factory(engine)() as s:
         assert s.query(Unit).count() == 1
+
+
+def test_unknown_user_still_runs_argon2_verify(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "digitadlp.app.routes.auth.verify_password",
+        lambda pw, h: calls.append(h) or False,
+    )
+    assert login(client, "tidakada", "x").status_code == 401
+    assert len(calls) == 1
+
+
+def test_inactive_user_runs_verify_too(client, app_db, monkeypatch):
+    u = make_user(app_db, "budi")
+    u.active = False
+    app_db.commit()
+    calls = []
+    monkeypatch.setattr(
+        "digitadlp.app.routes.auth.verify_password",
+        lambda pw, h: calls.append(h) or True,
+    )
+    assert login(client).status_code == 401
+    assert len(calls) == 1
+
+
+def test_reserve_is_atomic_under_concurrency():
+    import threading
+
+    from digitadlp.app.security import LoginThrottle
+
+    t = LoginThrottle()
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(t.reserve("a"))) for _ in range(50)]
+    [x.start() for x in threads]
+    [x.join() for x in threads]
+    assert results.count(True) == 5
+
+
+def test_login_drops_old_cookie_session_and_expired_rows(client, app_db):
+    u = make_user(app_db, "budi")
+    login(client)
+    old_hash = app_db.query(AuthSession).one().token_hash
+    app_db.add(AuthSession(token_hash="e" * 64, user_id=u.id, expires_at=utcnow() - timedelta(hours=1)))
+    app_db.commit()
+    login(client)  # cookie from first login still sent
+    hashes = {s.token_hash for s in app_db.query(AuthSession).all()}
+    assert len(hashes) == 1 and old_hash not in hashes and "e" * 64 not in hashes
+
+
+def test_create_session_requires_hours(app_db):
+    import pytest
+
+    from digitadlp.app.security import create_session
+
+    u = make_user(app_db, "budi")
+    with pytest.raises(TypeError):
+        create_session(app_db, u)

@@ -1,9 +1,13 @@
 import pytest
-from sqlalchemy import create_engine
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from digitadlp.app.models import Base
+from digitadlp.app.config import Settings
+from digitadlp.app.main import create_app
+from digitadlp.app.models import Base, Role, Unit, User
+from digitadlp.app.security import hash_password
 
 
 @pytest.fixture
@@ -15,14 +19,6 @@ def db():
     with Session(engine) as session:
         yield session
     engine.dispose()
-
-
-from fastapi.testclient import TestClient
-
-from digitadlp.app.config import Settings
-from digitadlp.app.main import create_app
-from digitadlp.app.models import Role, Unit, User
-from digitadlp.app.security import hash_password
 
 
 @pytest.fixture
@@ -57,8 +53,6 @@ def app_db(app):
 
 
 def make_user(db, username, role=Role.PENGUNGGAH, unit_name="Unit A", password="rahasia123"):
-    from sqlalchemy import select
-
     unit = db.scalar(select(Unit).where(Unit.name == unit_name))
     if unit is None:
         unit = Unit(name=unit_name)
