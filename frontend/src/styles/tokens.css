@@ -1,0 +1,20 @@
+/* Disalin dari :root docs/mockup/digitadlp-mockup.html; font memakai system stack (on-premise). */
+:root{
+  --bg:#f3f5f7; --surface:#ffffff; --ink:#14212b; --muted:#5b6b78; --line:#dbe2e8;
+  --accent:#0d5c63; --accent-soft:#d9ecec;
+  --pub:#2f7d4f; --pub-soft:#dff1e5; --int:#a86a12; --int-soft:#fbeed6; --rah:#b0302c; --rah-soft:#f8dddb;
+  --mark:#fff1a8; --redact:#14212b;
+  --f-display:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --f-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --f-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f171d; --surface:#17222a; --ink:#e4ebf0; --muted:#94a5b2; --line:#2a3842;
+  --accent:#5fbfc4; --accent-soft:#183a3d;
+  --pub:#6fcf95; --pub-soft:#1a3326; --int:#e5ad55; --int-soft:#3a2c14; --rah:#f07a74; --rah-soft:#3d1d1c;
+  --mark:#5c5220; --redact:#000; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f171d; --surface:#17222a; --ink:#e4ebf0; --muted:#94a5b2; --line:#2a3842;
+  --accent:#5fbfc4; --accent-soft:#183a3d;
+  --pub:#6fcf95; --pub-soft:#1a3326; --int:#e5ad55; --int-soft:#3a2c14; --rah:#f07a74; --rah-soft:#3d1d1c;
+  --mark:#5c5220; --redact:#000; color-scheme:dark}
