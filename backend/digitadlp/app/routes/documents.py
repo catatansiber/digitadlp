@@ -1,25 +1,19 @@
 import json
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from .. import workflow
-from ..models import Correction, Document, Role, User
+from ..access import VERSIONS, can_download, can_see_rahasia, can_view
+from ..audit import record
+from ..models import Correction, Document, Role, Status, Unit, User
+from ..storage import StoreError
 from ..security import current_user, get_db
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 MSG_NOT_FOUND = "Dokumen tidak ditemukan."
-
-
-def can_view(user: User, doc: Document) -> bool:
-    return (user.role == Role.PEMERIKSA or doc.owner_id == user.id
-            or doc.unit_id == user.unit_id)
-
-
-def can_see_rahasia(user: User, doc: Document) -> bool:
-    return user.role == Role.PEMERIKSA or doc.unit_id == user.unit_id
 
 
 def _load(db: Session, user: User, doc_id: str, allow_admin: bool = False) -> Document:
@@ -77,11 +71,58 @@ async def upload_doc(request: Request, file: UploadFile = File(...),
 
 
 @router.get("")
-def list_docs(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    q = select(Document).order_by(Document.created_at.desc())
-    if user.role != Role.PEMERIKSA:
+def list_docs(status: str | None = None, mine: bool = False,
+              user: User = Depends(current_user), db: Session = Depends(get_db)):
+    q = (select(Document, User.full_name, Unit.name)
+         .join(User, User.id == Document.owner_id).join(Unit, Unit.id == Document.unit_id)
+         .order_by(Document.created_at.desc()))
+    if status is not None:
+        if status not in {s.value for s in Status}:
+            raise HTTPException(422, "Status tidak dikenal.")
+        q = q.where(Document.status == Status(status))
+    if mine:
+        q = q.where(Document.owner_id == user.id)
+    elif user.role not in (Role.PEMERIKSA, Role.ADMIN):
         q = q.where(or_(Document.owner_id == user.id, Document.unit_id == user.unit_id))
-    return [_out(d) for d in db.scalars(q)]
+    return [
+        {"id": d.id, "title": d.title, "ext": d.ext, "status": d.status.value,
+         "label": d.label, "suggested_label": d.suggested_label,
+         "owner": owner, "unit": unit, "created_at": _iso(d.created_at)}
+        for d, owner, unit in db.execute(q)
+    ]
+
+
+MSG_DENIED = "Anda tidak punya akses ke versi ini."
+MIME = {"pdf": "application/pdf",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+
+
+@router.get("/{doc_id}/versions/{version}")
+def download_version(doc_id: str, version: str, request: Request,
+                     user: User = Depends(current_user), db: Session = Depends(get_db)):
+    doc = db.get(Document, doc_id)
+    if doc is None:
+        raise HTTPException(404, MSG_NOT_FOUND)
+    if version not in VERSIONS:
+        raise HTTPException(404, "Versi tidak ditemukan.")
+    if not can_download(user, doc, version):
+        record(db, user, "akses_ditolak", doc, detail=f"versi={version}")
+        db.commit()
+        # Dokumen dirilis diketahui publik (versi Publik terbuka), jadi 403 tidak membocorkan apa pun.
+        if not can_view(user, doc) and doc.status != Status.DIRILIS:
+            raise HTTPException(404, MSG_NOT_FOUND)
+        raise HTTPException(403, MSG_DENIED)
+    store = request.app.state.store
+    try:
+        data = store.get(doc.id, f"{version}.{doc.ext}")
+    except StoreError:
+        raise HTTPException(404, "Versi belum tersedia.") from None
+    record(db, user, "unduh", doc, detail=version)
+    db.commit()
+    return Response(
+        data, media_type=MIME.get(doc.ext, "application/octet-stream"),
+        headers={"Content-Disposition": f'attachment; filename="{doc.id}-{version}.{doc.ext}"',
+                 "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/{doc_id}")
