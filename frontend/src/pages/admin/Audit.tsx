@@ -27,6 +27,7 @@ export const ACTION_TEXT: Record<string, string> = {
   kembalikan: "Kembalikan",
   rilis: "Rilis versi Publik",
   unduh: "Unduh versi",
+  lihat_teks: "Lihat teks",
   akses_ditolak: "Akses ditolak",
   user_dibuat: "Pengguna dibuat",
   user_diubah: "Pengguna diubah",

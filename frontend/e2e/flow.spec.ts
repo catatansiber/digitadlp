@@ -58,7 +58,7 @@ async function download(page: Page, version: string): Promise<string> {
   return path;
 }
 
-test("alur lengkap: admin, upload, cek, setujui, unduh, rilis, audit", async ({ page }) => {
+test("alur lengkap: admin, unggah, cek, setujui, unduh, rilis, audit", async ({ page }) => {
   const pw = "sandi-e2e-123";
 
   // 1. Admin membuat unit dan dua pengguna.
@@ -85,7 +85,7 @@ test("alur lengkap: admin, upload, cek, setujui, unduh, rilis, audit", async ({ 
   await shot(page, "01-admin-pengguna");
   await logout(page);
 
-  // 2. Rina meng-upload PDF.
+  // 2. Rina mengunggah PDF.
   await login(page, "rina", pw);
   await page.goto("/upload");
   await page.locator('input[type="file"]').setInputFiles(makePdf());
@@ -130,4 +130,19 @@ test("alur lengkap: admin, upload, cek, setujui, unduh, rilis, audit", async ({ 
   await expect(page.getByRole("cell", { name: "Unduh versi" }).first()).toBeVisible();
   await expect(page.getByRole("cell", { name: "Rilis versi Publik" })).toBeVisible();
   await shot(page, "06-admin-audit");
+});
+
+test("layar ponsel 400px tanpa gulir horizontal", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 800 });
+  await login(page, "admin", "admin-e2e-123");
+  for (const path of ["/", "/admin/audit", "/admin/pengguna"]) {
+    await page.goto(path);
+    await expect(page.getByRole("button", { name: "Keluar" })).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    const { sw, cw } = await page.evaluate(() => ({
+      sw: document.documentElement.scrollWidth,
+      cw: document.documentElement.clientWidth,
+    }));
+    expect(sw, path).toBeLessThanOrEqual(cw);
+  }
 });

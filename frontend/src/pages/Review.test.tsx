@@ -75,7 +75,7 @@ test("self-approval button disabled with reason", async () => {
   await open({ ...reviewer, id: "00000000000000000000000000000001" });
   const b = await screen.findByRole("button", { name: "Setujui & buat versi" });
   expect(b).toBeDisabled();
-  expect(screen.getByText("Pemeriksa tidak boleh menyetujui dokumen yang ia upload sendiri.")).toBeInTheDocument();
+  expect(screen.getByText("Pemeriksa tidak boleh menyetujui dokumen yang ia unggah sendiri.")).toBeInTheDocument();
 });
 
 test("abaikan posts correction and refetches", async () => {
@@ -131,7 +131,7 @@ test("owner sees return reason and reupload", async () => {
   delete doc.findings;
   await open(uploader);
   expect(await screen.findByText("Lampiran kurang")).toBeInTheDocument();
-  expect(screen.getByLabelText("Upload ulang")).toBeInTheDocument();
+  expect(screen.getByLabelText("Unggah ulang")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Setujui & buat versi" })).toBeNull();
   expect(textCalls).toBe(0);
 });

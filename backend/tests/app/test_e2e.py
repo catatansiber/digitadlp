@@ -16,7 +16,7 @@ from digitadlp.detect.ner import FakeNer
 from .conftest import make_user
 
 NIK = "6474015203880002"
-MSG = "Dokumen terenkripsi atau rusak. Buka kunci atau simpan ulang file, lalu upload lagi."
+MSG = "Dokumen terenkripsi atau rusak. Buka kunci atau simpan ulang file, lalu unggah lagi."
 PDF = "application/pdf"
 
 

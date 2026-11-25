@@ -154,7 +154,7 @@ def get_text(doc_id: str, request: Request, user: User = Depends(current_user),
             pages = extract_pdf_text(src) if doc.ext == "pdf" else extract_docx_text(src)
     except Exception:  # noqa: BLE001 - jangan bocorkan isi/galat ekstraksi
         raise HTTPException(422, MSG_DOC_ERROR) from None
-    record(db, user, "unduh", doc, detail="versi=teks")
+    record(db, user, "lihat_teks", doc, detail="")
     db.commit()
     return JSONResponse({"pages": list(pages)}, headers={"Cache-Control": "no-store"})
 

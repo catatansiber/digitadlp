@@ -32,6 +32,11 @@ function saveBlob(blob: Blob, filename: string) {
 
 export function Versions() {
   const { id = "" } = useParams();
+  // Keyed by id so blocked/confirm/toast state resets when navigating between documents.
+  return <VersionsFor key={id} id={id} />;
+}
+
+function VersionsFor({ id }: { id: string }) {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [toast, setToast] = useState<{ message: string; kind: "info" | "error" } | null>(null);

@@ -30,7 +30,7 @@ export function Dashboard() {
         <h1>Beranda</h1>
         {canUpload && (
           <Link className="btn primary" to="/upload">
-            + Upload dokumen
+            + Unggah dokumen
           </Link>
         )}
       </div>
@@ -66,7 +66,7 @@ export function Dashboard() {
       ) : q.isLoading ? (
         <p className="loading">Memuat…</p>
       ) : docs.length === 0 ? (
-        <EmptyState>Belum ada dokumen. Upload dokumen pertama.</EmptyState>
+        <EmptyState>Belum ada dokumen. Unggah dokumen pertama.</EmptyState>
       ) : (
         <Table>
           <thead>

@@ -150,8 +150,8 @@ def test_text_endpoint_audited(ready, mk_client, app_db):
     rev = mk_client("pemeriksa", unit="Unit B")
     assert rev.get(f"/api/documents/{doc_id}/text").status_code == 200
     ev = app_db.scalars(select(AuditEvent).where(
-        AuditEvent.document_id == doc_id, AuditEvent.action == "unduh")).all()
-    assert [e.detail for e in ev] == ["versi=teks"]
+        AuditEvent.document_id == doc_id, AuditEvent.action == "lihat_teks")).all()
+    assert [e.detail for e in ev] == [""]
 
 
 def test_return_reason_visible_to_owner_unit_only(ready, mk_client):
@@ -185,3 +185,16 @@ def test_owner_and_unit_names(ready):
     assert d["owner_name"] == "Pengunggah1" and d["unit_name"] == "Unit A"
     row = up.get("/api/documents").json()[0]
     assert row["owner_name"] == "Pengunggah1" and row["unit_name"] == "Unit A"
+
+
+def test_security_headers_on_unhandled_500(app):
+    @app.get("/api/boom")
+    def boom():
+        raise RuntimeError("rusak")
+
+    with TestClient(app, raise_server_exceptions=False) as c:
+        r = c.get("/api/boom")
+    assert r.status_code == 500
+    assert r.headers["x-frame-options"] == "DENY"
+    assert r.headers["referrer-policy"] == "no-referrer"
+    assert "frame-ancestors 'none'" in r.headers["content-security-policy"]

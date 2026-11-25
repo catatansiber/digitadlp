@@ -15,7 +15,7 @@ import { validateFile } from "./Upload";
 
 export const MAX_REASON = 200; // sama dengan backend workflow.MAX_REASON
 export const MSG_SELF =
-  "Pemeriksa tidak boleh menyetujui dokumen yang ia upload sendiri.";
+  "Pemeriksa tidak boleh menyetujui dokumen yang ia unggah sendiri.";
 
 type DocDetail = {
   id: string;
@@ -178,11 +178,11 @@ export function Review() {
           {self && (
             <div className="row">
               <label className="btn primary">
-                {pending("reupload") ? "Mengunggah…" : "Upload ulang"}
+                {pending("reupload") ? "Mengunggah…" : "Unggah ulang"}
                 <input
                   type="file"
                   accept=".pdf,.docx"
-                  aria-label="Upload ulang"
+                  aria-label="Unggah ulang"
                   className="visually-hidden"
                   disabled={busy}
                   onChange={(e) => {

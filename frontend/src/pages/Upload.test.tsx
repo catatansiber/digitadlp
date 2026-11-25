@@ -87,7 +87,7 @@ test("server 422 detail shown", async () => {
   server.use(meAs(uploader));
   reply = {
     status: 422,
-    body: { detail: "Dokumen terenkripsi atau rusak. Buka kunci atau simpan ulang file, lalu upload lagi." },
+    body: { detail: "Dokumen terenkripsi atau rusak. Buka kunci atau simpan ulang file, lalu unggah lagi." },
   };
   renderApp("/upload");
   await screen.findByRole("heading", { name: "Unggah dokumen" });

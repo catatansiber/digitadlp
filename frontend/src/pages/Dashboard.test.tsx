@@ -30,7 +30,7 @@ test("dashboard lists docs with chips", async () => {
   expect(within(row).getByText(/2026/)).toBeInTheDocument();
   const kpi = screen.getByLabelText("Ringkasan");
   expect(within(kpi).getByText("Gagal").nextSibling).toHaveTextContent("1");
-  expect(screen.getByRole("link", { name: /Upload dokumen/ })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Unggah dokumen/ })).toBeInTheDocument();
 });
 
 test("row click opens review", async () => {
@@ -43,14 +43,14 @@ test("row click opens review", async () => {
 test("empty state", async () => {
   server.use(meAs(uploader), http.get("/api/documents", () => HttpResponse.json([])));
   renderApp("/");
-  expect(await screen.findByText("Belum ada dokumen. Upload dokumen pertama.")).toBeInTheDocument();
+  expect(await screen.findByText("Belum ada dokumen. Unggah dokumen pertama.")).toBeInTheDocument();
 });
 
 test("admin has no upload button", async () => {
   server.use(meAs(admin), http.get("/api/documents", () => HttpResponse.json([])));
   renderApp("/");
   await screen.findByText("Belum ada dokumen.", { exact: false });
-  expect(screen.queryByRole("link", { name: /Upload dokumen/ })).toBeNull();
+  expect(screen.queryByRole("link", { name: /Unggah dokumen/ })).toBeNull();
 });
 
 test("filters send query params", async () => {

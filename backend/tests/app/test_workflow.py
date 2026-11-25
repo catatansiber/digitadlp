@@ -94,7 +94,7 @@ def test_self_approval_403(client_as, work, make_pdf):
     work()
     r = rev.post(f"/api/documents/{r.json()['id']}/approve")
     assert r.status_code == 403
-    assert r.json()["detail"] == "Pemeriksa tidak boleh menyetujui dokumen yang ia upload sendiri."
+    assert r.json()["detail"] == "Pemeriksa tidak boleh menyetujui dokumen yang ia unggah sendiri."
 
 
 def test_correction_after_approval_resets(client_as, work, make_pdf, wapp):

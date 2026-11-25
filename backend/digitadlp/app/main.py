@@ -40,6 +40,29 @@ def build_engine() -> Engine:
     return Engine(IndoBertNer(path), EmployeeDirectory(set()))
 
 
+class SecurityHeadersMiddleware:
+    """ASGI murni: header keamanan juga terpasang pada respons 500 yang tak tertangani."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = [(k, v) for k, v in message.get("headers", [])
+                           if k.decode("latin-1").lower() not in {h.lower() for h in SECURITY_HEADERS}]
+                headers += [(k.lower().encode("latin-1"), v.encode("latin-1"))
+                            for k, v in SECURITY_HEADERS.items()]
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; img-src 'self' data:; style-src 'self'; "
@@ -120,12 +143,9 @@ def create_app(settings: Settings, engine: Engine | None = None) -> FastAPI:
         # Jangan memantulkan nilai input (bisa berisi data pribadi).
         return JSONResponse({"detail": MSG_INVALID}, status_code=422)
 
-    @app.middleware("http")
-    async def _security_headers(request: Request, call_next):
-        response = await call_next(request)
-        for k, v in SECURITY_HEADERS.items():
-            response.headers[k] = v
-        return response
+    # Pembungkus terluar (di luar ServerErrorMiddleware) agar respons 500 pun berheader.
+    _build = app.build_middleware_stack
+    app.build_middleware_stack = lambda: SecurityHeadersMiddleware(_build())  # type: ignore[method-assign]
 
     app.include_router(auth.router)
     app.include_router(documents.router)
