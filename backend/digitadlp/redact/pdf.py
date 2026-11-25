@@ -7,6 +7,7 @@ REDACT/MASK finding text is still extractable, DocumentError is raised.
 
 import os
 import re
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -14,12 +15,17 @@ import pymupdf as fitz
 import pytesseract
 from PIL import Image
 
-from ..models import Action, Finding, Version
+from ..models import Action, Finding, Kind, Version
 from ..policy import action_for, mask_value, placeholder
 
 OCR_DPI = 200
 OCR_LANG = "ind"
-_TESSDATA = "/usr/share/tesseract-ocr/5/tessdata"
+HYBRID_IMAGE_RATIO = 0.20
+_DIGIT_KINDS = frozenset(
+    {Kind.NIK, Kind.KK, Kind.ACCOUNT, Kind.NPWP, Kind.NIP, Kind.PHONE}
+)
+_NON_DIGIT = re.compile(r"[^0-9]")
+_TESSDIR = re.compile(r'"([^"]+)"')
 _NON_ALNUM = re.compile(r"[^0-9A-Za-z]")
 _WS = re.compile(r"\s+")
 
@@ -46,6 +52,52 @@ def _is_scanned(page: fitz.Page) -> bool:
     return not page.get_text().strip()
 
 
+def _image_ratio(page: fitz.Page) -> float:
+    area = abs(page.rect)
+    if not area:
+        return 0.0
+    covered = 0.0
+    for info in page.get_image_info():
+        covered += abs(fitz.Rect(info["bbox"]) & page.rect)
+    return min(covered / area, 1.0)
+
+
+def _kind(page: fitz.Page) -> str:
+    """'scan' (no text layer), 'hybrid' (text + images >= 20%) or 'text'."""
+    if _is_scanned(page):
+        return "scan"
+    if _image_ratio(page) >= HYBRID_IMAGE_RATIO:
+        return "hybrid"
+    return "text"
+
+
+def _page_text(page: fitz.Page) -> str:
+    k = _kind(page)
+    if k == "scan":
+        return _ocr_text(page)
+    if k == "hybrid":
+        return page.get_text() + "\n" + _ocr_text(page)
+    return page.get_text()
+
+
+def _tessdata() -> str:
+    env = os.environ.get("TESSDATA_PREFIX")
+    if env:
+        return env
+    try:
+        res = subprocess.run(
+            ["tesseract", "--list-langs"], capture_output=True, text=True, timeout=30
+        )
+        m = _TESSDIR.search(res.stdout + res.stderr)
+    except (OSError, subprocess.SubprocessError):
+        m = None
+    if not m:
+        raise DocumentError(
+            "cannot find tessdata directory: set TESSDATA_PREFIX or install tesseract"
+        )
+    return m.group(1)
+
+
 def _pil(page: fitz.Page) -> Image.Image:
     pix = page.get_pixmap(dpi=OCR_DPI)
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
@@ -58,7 +110,7 @@ def _ocr_text(page: fitz.Page) -> str:
 def extract_pdf_text(path: Path) -> list[str]:
     doc = _open(Path(path))
     try:
-        return [_ocr_text(p) if _is_scanned(p) else p.get_text() for p in doc]
+        return [_page_text(p) for p in doc]
     finally:
         doc.close()
 
@@ -68,18 +120,35 @@ def _norm(s: str) -> str:
 
 
 def _tokens(text: str) -> list[str]:
-    return [t for t in text.split() if len(t) >= 3]
+    return [t for t in text.split() if len(_norm(t)) >= 3]
 
 
-def _locate_text(page: fitz.Page, f: Finding) -> list[tuple[fitz.Rect, str]]:
-    """(rect, token_text) pairs for every occurrence of the finding."""
-    if "\n" not in f.text and "\r" not in f.text:
-        hits = page.search_for(f.text)
-        if hits:
-            return [(r, f.text) for r in hits]
+def _locate(page: fitz.Page, words, f: Finding) -> list[tuple[fitz.Rect, str]]:
+    """(rect, token) for every occurrence of f, in the text layer (if any)
+    and in OCR words (if given). Fallback per token: each token with
+    normalized length >= 3 must be found at least once, else DocumentError."""
     out = []
-    for tok in _tokens(f.text):
-        out += [(r, tok) for r in page.search_for(tok)]
+    single_line = "\n" not in f.text and "\r" not in f.text
+    if page is not None and single_line:
+        out += [(r, f.text) for r in page.search_for(f.text)]
+    if words is not None:
+        whole = _norm(f.text)
+        out += [(r, f.text) for n, r in words if n == whole]
+    if out:
+        return out
+    toks = _tokens(f.text)
+    if not toks:
+        return []
+    for tok in toks:
+        hits = []
+        if page is not None:
+            hits += [(r, tok) for r in page.search_for(tok)]
+        if words is not None:
+            nt = _norm(tok)
+            hits += [(r, tok) for n, r in words if n == nt]
+        if not hits:
+            raise DocumentError(f"cannot locate part of {f.kind} finding")
+        out += hits
     return out
 
 
@@ -97,21 +166,6 @@ def _ocr_words(page: fitz.Page) -> list[tuple[str, fitz.Rect]]:
         rect = fitz.Rect(x, y, x + ww, y + hh) * scale
         words.append((n, rect))
     return words
-
-
-def _locate_scanned(words, f: Finding) -> list[tuple[fitz.Rect, str]]:
-    out = []
-    whole = _norm(f.text)
-    for n, rect in words:
-        if n == whole:
-            out.append((rect, f.text))
-    if out:
-        return out
-    toks = {_norm(t): t for t in f.text.split() if len(_norm(t)) >= 2}
-    for n, rect in words:
-        if n in toks:
-            out.append((rect, toks[n]))
-    return out
 
 
 def _label(f: Finding, action: Action, tok: str) -> str:
@@ -136,17 +190,52 @@ def _squash(s: str) -> str:
 
 
 def _leaks(text: str, targets: list[Finding]) -> list[str]:
-    hay = _squash(text)
-    return [f.text for f in targets if _squash(f.text) and _squash(f.text) in hay]
+    digits = _NON_DIGIT.sub("", text)
+    hay = _squash(text).casefold()
+    out = []
+    for f in targets:
+        if f.kind in _DIGIT_KINDS:
+            needle = _NON_DIGIT.sub("", f.text)
+            if needle and needle in digits:
+                out.append(f.text)
+        else:
+            needle = _squash(f.text).casefold()
+            if needle and needle in hay:
+                out.append(f.text)
+    return out
+
+
+def _strip_active_content(doc: fitz.Document) -> None:
+    for name in list(doc.embfile_names()):
+        doc.embfile_del(name)
+    for page in doc:
+        for w in list(page.widgets() or []):
+            page.delete_widget(w)
+    cat = doc.pdf_catalog()
+    for key in ("OpenAction", "AA", "AcroForm"):
+        doc.xref_set_key(cat, key, "null")
+    # drop the whole name tree (JavaScript, EmbeddedFiles, Dests) for PUBLIK
+    for key in ("Names", "PageMode"):
+        doc.xref_set_key(cat, key, "null")
+    if hasattr(doc, "scrub"):
+        doc.scrub(
+            attached_files=True, clean_pages=True, embedded_files=True,
+            hidden_text=False, javascript=True, metadata=True,
+            redactions=False, remove_links=True, reset_fields=True,
+            reset_responses=True, thumbnails=True, xml_metadata=True,
+        )
+    for page in doc:
+        doc.xref_set_key(page.xref, "Thumb", "null")
+        doc.xref_set_key(page.xref, "AA", "null")
 
 
 def _reocr_page(doc: fitz.Document, idx: int) -> None:
     """Replace a scanned page by an image + invisible OCR text layer."""
-    os.environ.setdefault("TESSDATA_PREFIX", _TESSDATA)
+    tessdata = _tessdata()
     page = doc[idx]
     rect = page.rect
     pix = page.get_pixmap(dpi=OCR_DPI)
-    ocr = fitz.open("pdf", pix.pdfocr_tobytes(language=OCR_LANG))
+    ocr = fitz.open("pdf", pix.pdfocr_tobytes(language=OCR_LANG, tessdata=tessdata))
     doc.delete_page(idx)
     doc.insert_pdf(ocr, start_at=idx)
     new = doc[idx]
@@ -167,12 +256,15 @@ def redact_pdf(
             raise DocumentError("more finding pages than PDF pages")
         scanned = []
         for i, page in enumerate(doc):
-            is_scan = _is_scanned(page)
+            kind = _kind(page)
+            is_scan = kind == "scan"
             if is_scan:
                 scanned.append(i)
             if version == Version.PUBLIK:
                 for annot in list(page.annots() or []):
                     page.delete_annot(annot)
+                for w in list(page.widgets() or []):
+                    page.delete_widget(w)
                 for link in page.get_links():
                     page.delete_link(link)
             findings = findings_per_page[i] if i < len(findings_per_page) else []
@@ -182,9 +274,9 @@ def redact_pdf(
             ]
             if not targets:
                 continue
-            words = _ocr_words(page) if is_scan else None
+            words = _ocr_words(page) if kind != "text" else None
             for f, action in targets:
-                hits = _locate_scanned(words, f) if is_scan else _locate_text(page, f)
+                hits = _locate(None if is_scan else page, words, f)
                 if not hits:
                     raise DocumentError(
                         f"cannot locate {f.kind} finding on page {i + 1}"
@@ -196,6 +288,8 @@ def redact_pdf(
                 graphics=fitz.PDF_REDACT_LINE_ART_NONE,
             )
             check = _ocr_text(page) if is_scan else page.get_text()
+            if kind == "hybrid":
+                check += "\n" + _ocr_text(page)
             leaked = _leaks(check, [f for f, _ in targets])
             if leaked:
                 raise DocumentError(
@@ -205,6 +299,7 @@ def redact_pdf(
             for i in scanned:
                 _reocr_page(doc, i)
         if version == Version.PUBLIK:
+            _strip_active_content(doc)
             doc.set_metadata({})
             doc.del_xml_metadata()
         doc.save(Path(dst), garbage=4, deflate=True)

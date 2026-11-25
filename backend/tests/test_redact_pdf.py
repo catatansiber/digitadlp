@@ -109,3 +109,110 @@ def test_corrupt_raises(tmp_path):
     bad.write_bytes(b"not a pdf at all")
     with pytest.raises(DocumentError):
         extract_pdf_text(bad)
+
+
+# ---- review fixes ----
+import io
+
+from PIL import Image, ImageDraw
+
+from digitadlp.models import Finding
+from digitadlp.redact import pdf as pdfmod
+
+
+def test_fallback_every_token_must_hit(make_pdf, tmp_path):
+    src = make_pdf("NIK 6474 0152\n0388 0002 terdaftar")
+    f = Finding(Kind.NIK, 0, 19, "6474 0152\n9999 0002", "test")
+    with pytest.raises(DocumentError):
+        redact_pdf(src, tmp_path / "out.pdf", [[f]], Version.PUBLIK)
+
+
+@pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract missing")
+def test_scanned_fallback_every_token_must_hit(make_scanned_pdf, tmp_path):
+    src = make_scanned_pdf(TEXT)
+    f = Finding(Kind.NAME_CITIZEN, 0, 10, "Siti\nZzqxwv", "test")
+    with pytest.raises(DocumentError):
+        redact_pdf(src, tmp_path / "out.pdf", [[f]], Version.PUBLIK)
+
+
+def test_leak_check_digits_only_for_digit_kinds():
+    f = Finding(Kind.NIK, 0, 16, NIK, "test")
+    assert pdfmod._leaks("NIK 6474.0152.0388.0002", [f])
+    assert not pdfmod._leaks("NIK 6474********0002", [f])
+    name = Finding(Kind.NAME_CITIZEN, 0, 4, "Siti Rahmawati", "test")
+    assert pdfmod._leaks("nama SITI\nrahmawati", [name])
+
+
+def test_punctuated_nik_removed(make_pdf, tmp_path):
+    src = make_pdf("NIK 6474.0152.0388.0002 terdaftar")
+    f = Finding(Kind.NIK, 4, 23, "6474.0152.0388.0002", "test")
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, [[f]], Version.PUBLIK)
+    text = fitz.open(out)[0].get_text()
+    assert "6474015203880002" not in "".join(c for c in text if c.isdigit())
+
+
+def _hybrid_pdf(tmp_path):
+    from tests.conftest import _font
+    img = Image.new("RGB", (1400, 400), "white")
+    ImageDraw.Draw(img).text((40, 150), f"NIK {NIK}", fill="black", font=_font(64))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    path = tmp_path / "hybrid.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 72), "SURAT KETERANGAN DOMISILI", fontsize=14)
+    page.insert_image(fitz.Rect(40, 120, 555, 267), stream=buf.getvalue())
+    page.insert_image(fitz.Rect(40, 300, 555, 600), stream=buf.getvalue())
+    doc.save(path)
+    return path
+
+
+@pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract missing")
+def test_hybrid_page_image_nik_removed(tmp_path):
+    src = _hybrid_pdf(tmp_path)
+    pages = extract_pdf_text(src)
+    assert "SURAT" in pages[0] and NIK in pages[0].replace(" ", "")
+    out = _run(src, tmp_path, Version.PUBLIK)
+    doc = fitz.open(out)
+    assert NIK not in pdfmod._ocr_text(doc[0]).replace(" ", "")
+    assert "SURAT" in doc[0].get_text()
+
+
+def test_publik_strips_attachments_widgets_js(make_pdf, tmp_path):
+    src = make_pdf(TEXT)
+    doc = fitz.open(src)
+    doc.embfile_add("ktp.txt", NIK.encode())
+    w = fitz.Widget()
+    w.field_name, w.field_type = "nik", fitz.PDF_WIDGET_TYPE_TEXT
+    w.field_value, w.rect = NIK, fitz.Rect(72, 300, 300, 320)
+    doc[0].add_widget(w)
+    doc.xref_set_key(doc.pdf_catalog(), "OpenAction",
+                     "<</S/JavaScript/JS(app.alert\\(1\\))>>")
+    rich = tmp_path / "rich.pdf"
+    doc.save(rich)
+    out = _run(rich, tmp_path, Version.PUBLIK)
+    res = fitz.open(out)
+    assert res.embfile_count() == 0
+    assert not list(res[0].widgets())
+    assert b"JavaScript" not in out.read_bytes()
+    assert NIK.encode() not in out.read_bytes()
+
+
+def test_tessdata_env(monkeypatch):
+    monkeypatch.setenv("TESSDATA_PREFIX", "/x/tessdata")
+    assert pdfmod._tessdata() == "/x/tessdata"
+
+
+def test_tessdata_discovered(monkeypatch):
+    monkeypatch.delenv("TESSDATA_PREFIX", raising=False)
+    assert pdfmod._tessdata().rstrip("/").endswith("tessdata")
+
+
+def test_tessdata_missing_raises(monkeypatch):
+    monkeypatch.delenv("TESSDATA_PREFIX", raising=False)
+    def boom(*a, **k):
+        raise FileNotFoundError("tesseract")
+    monkeypatch.setattr(pdfmod.subprocess, "run", boom)
+    with pytest.raises(DocumentError, match="tessdata"):
+        pdfmod._tessdata()
