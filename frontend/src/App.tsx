@@ -10,6 +10,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { Upload } from "./pages/Upload";
 import { Placeholder } from "./pages/Placeholder";
 import { Review } from "./pages/Review";
+import { Versions } from "./pages/Versions";
 
 function on401(err: unknown) {
   if (err instanceof ApiError && err.status === 401) emitSessionExpired();
@@ -52,7 +53,7 @@ export function AppRoutes() {
           }
         />
         <Route path="dokumen/:id" element={<Review />} />
-        <Route path="dokumen/:id/versi" element={<Placeholder title="Versi dokumen" />} />
+        <Route path="dokumen/:id/versi" element={<Versions />} />
         <Route path="admin/pengguna" element={admin("Pengguna")} />
         <Route path="admin/unit" element={admin("Unit")} />
         <Route path="admin/pegawai" element={admin("Pegawai")} />

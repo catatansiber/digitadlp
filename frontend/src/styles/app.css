@@ -88,3 +88,6 @@ mark.employee{border-bottom-color:var(--pub)}
 .manual,.dialog{display:grid;gap:8px;border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--surface)}
 .field select,.field textarea{font:inherit;font-weight:400;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:100%}
 .doc-title{font-size:17px;overflow-wrap:anywhere;min-width:0}
+
+.ver{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.box{display:flex;flex-direction:column;align-items:flex-start;gap:10px;border:1px solid var(--line);border-radius:8px;padding:14px;background:var(--surface)}
