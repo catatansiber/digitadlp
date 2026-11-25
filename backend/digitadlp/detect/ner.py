@@ -56,14 +56,18 @@ def _chunks(text: str, limit: int = MAX_CHUNK):
 
 class IndoBertNer:
     def __init__(self, model_path: str):
-        from transformers import pipeline  # optional extra: lazy import
+        # optional extra: lazy import
+        from transformers import AutoModelForTokenClassification, AutoTokenizer, pipeline
 
+        # Load explicitly from the local folder so nothing is fetched from the network.
+        tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+        model = AutoModelForTokenClassification.from_pretrained(model_path, local_files_only=True)
         self._pipe = pipeline(
             "token-classification",
-            model=model_path,
+            model=model,
+            tokenizer=tokenizer,
             aggregation_strategy="simple",
             device=-1,
-            model_kwargs={"local_files_only": True},
         )
 
     def find(self, text: str) -> list[Finding]:
