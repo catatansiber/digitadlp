@@ -329,3 +329,35 @@ def test_image_outside_media_ocrd(make_docx, tmp_path):
             b"</Types>", b'<Default Extension="png" ContentType="image/png"/></Types>')})
     out = _all_text(_run(src, tmp_path, Version.PUBLIK))
     assert Image.open(io.BytesIO(out["word/other/pic.png"])).convert("L").getextrema() == (0, 0)
+
+
+# ---- review round 2 ----
+
+def _add_ct(override_part, ctype):
+    return lambda b: b.replace(b"</Types>", f'<Override PartName="/{override_part}" '
+                               f'ContentType="{ctype}"/></Types>'.encode())
+
+
+@pytest.mark.parametrize("part,ctype,data", [
+    ("word/afchunk.mht", "message/rfc822", b"MIME-Version: 1.0\r\n\r\nNIK"),
+    ("word/vbaProject.bin", "application/vnd.ms-office.vbaProject", b"\xd0\xcf\x11\xe0"),
+])
+def test_unsupported_parts_rejected(make_docx, tmp_path, part, ctype, data):
+    src = _patch(make_docx(), tmp_path, {part: data,
+                                         "[Content_Types].xml": _add_ct(part, ctype)})
+    for v in (Version.PUBLIK, Version.INTERNAL):
+        with pytest.raises(DocumentError, match="tidak didukung"):
+            _run(src, tmp_path, v)
+
+
+def test_ner_does_not_touch_structural_attributes(make_docx, tmp_path):
+    from docx import Document
+    style = ('<w:style w:type="paragraph" w:styleId="Siti Rahmawati">'
+             '<w:name w:val="Siti Rahmawati"/><w:rPr><w:rFonts w:ascii="Siti Rahmawati"/>'
+             '</w:rPr></w:style>')
+    src = _patch(make_docx(), tmp_path, {"word/styles.xml": lambda b: b.replace(
+        b"</w:styles>", style.encode() + b"</w:styles>")})
+    out = _run(src, tmp_path, Version.PUBLIK)
+    styles = _all_text(out)["word/styles.xml"].decode()
+    assert styles.count('"Siti Rahmawati"') == 3
+    Document(out)  # still opens

@@ -21,7 +21,8 @@ import pytesseract
 from lxml import etree
 from PIL import Image
 
-from ..models import Action, Finding, Version
+from ..detect.patterns import find_patterns
+from ..models import Action, Finding, Kind, Version
 from ..policy import action_for, mask_value, placeholder
 from .pdf import OCR_LANG, DocumentError, _leaks
 
@@ -102,13 +103,38 @@ def _paragraph_texts(parts: dict[str, bytes]) -> list[str]:
     return out
 
 
-def _values(root: etree._Element):
-    """every text node, tail and attribute value (entities/char refs decoded)"""
+_PATTERN_KINDS = frozenset({Kind.NIK, Kind.KK, Kind.NPWP, Kind.PHONE, Kind.EMAIL,
+                            Kind.ACCOUNT, Kind.NIP})
+_HUMAN_ATTRS = frozenset({"descr", "title", "alt", "instr"})
+_NAME_OWNERS = frozenset({"docPr", "cNvPr"})
+_VAL_OWNERS = frozenset({"alias", "tag", "docVar"})
+
+
+def _human_attr(el: etree._Element, key: str) -> bool:
+    """attribute that holds human-written text (full detect incl. NER);
+    every other attribute gets regex-only detection"""
+    k = etree.QName(key).localname
+    owner = etree.QName(el).localname
+    return (k in _HUMAN_ATTRS
+            or (k == "name" and owner in _NAME_OWNERS)
+            or (k == "val" and owner in _VAL_OWNERS)
+            or (k == "Target" and el.get("TargetMode") == "External"))
+
+
+def _units(root: etree._Element):
+    """(value, human) for every attribute value, text node and tail
+    (entities/char refs decoded by lxml)"""
     for el in root.iter():
         if isinstance(el.tag, str):
-            yield from el.attrib.values()
-        yield el.text or ""
-        yield el.tail or ""
+            for k, v in el.attrib.items():
+                yield v, _human_attr(el, k)
+        yield el.text or "", True
+        yield el.tail or "", True
+
+
+def _values(root: etree._Element):
+    for v, _ in _units(root):
+        yield v
 
 
 def _xml_names(parts: dict[str, bytes]) -> list[str]:
@@ -118,9 +144,10 @@ def _xml_names(parts: dict[str, bytes]) -> list[str]:
 def _value_targets(parts, detect_fn, version) -> list[Finding]:
     out = []
     for name in _xml_names(parts):
-        for v in _values(_parse(parts[name], name)):
+        for v, human in _units(_parse(parts[name], name)):
             if len(v.strip()) >= 4:
-                out += [f for f in detect_fn(v) if action_for(f, version) != Action.KEEP]
+                fn = detect_fn if human else find_patterns
+                out += [f for f in fn(v) if action_for(f, version) != Action.KEEP]
     return out
 
 
@@ -141,12 +168,30 @@ EMBED_MSG = ("Dokumen berisi objek tersemat (Excel/Word/OLE). Hapus atau ganti "
              "objek tersebut, lalu upload lagi.")
 
 
+UNSUPPORTED_MSG = ("Dokumen berisi bagian yang tidak didukung (mis. altChunk/makro). "
+                   "Simpan ulang sebagai .docx biasa, lalu upload lagi.")
+_FONT_TYPES = ("application/x-font",
+               "application/vnd.openxmlformats-officedocument.obfuscatedfont")
+
+
+def _reject_unsupported(parts, types) -> None:
+    for n in parts:
+        t = types.get(n, "").lower()
+        if (n.endswith(".rels") or n == "[Content_Types].xml"
+                or t.endswith("xml") or t.endswith("+xml")
+                or (t.startswith("image/") and n.lower().endswith(_IMAGE_EXT))
+                or t.startswith(_FONT_TYPES)
+                or n.startswith("docProps/thumbnail")):
+            continue
+        raise DocumentError(UNSUPPORTED_MSG)
+
+
 def _reject_embeddings(parts, types) -> None:
     for n in parts:
         t = types.get(n, "").lower()
         if (n.startswith("word/embeddings/") or "oleobject" in t
                 or t.endswith(".package") or "/package" in t and "relationships" not in t
-                or n.lower().endswith(".bin") and "vbaproject" not in n.lower()):
+                or (n.lower().endswith(".bin") and "vbaproject" not in n.lower())):
             raise DocumentError(EMBED_MSG)
 
 
@@ -198,9 +243,12 @@ def _redact_string(s: str, detect_fn, version, hits) -> str:
     if len(s.strip()) < 4:
         return s
     todo = [(f, a) for f in detect_fn(s) if (a := action_for(f, version)) != Action.KEEP]
-    for f, a in sorted(todo, key=lambda x: x[0].start, reverse=True):
+    floor = len(s) + 1
+    for f, a in sorted(todo, key=lambda x: (x[0].start, -x[0].end), reverse=True):
         hits.append(f)
-        s = s[:f.start] + _replacement(f, a) + s[f.end:]
+        # an overlap with the span replaced just before: cover up to it
+        s = s[:f.start] + _replacement(f, a) + s[min(f.end, floor):]
+        floor = f.start
     return s
 
 
@@ -209,7 +257,8 @@ def _redact_values(root, detect_fn, version, hits) -> None:
     for el in root.iter():
         if isinstance(el.tag, str):
             for k, v in el.attrib.items():
-                nv = _redact_string(v, detect_fn, version, hits)
+                fn = detect_fn if _human_attr(el, k) else find_patterns
+                nv = _redact_string(v, fn, version, hits)
                 if nv != v:
                     el.set(k, nv)
         if el.text:
@@ -345,8 +394,13 @@ def _write(parts: dict[str, bytes], dst: Path) -> None:
 def _verify(path: Path, targets: list[Finding]) -> None:
     parts = _read(Path(path))
     for name in _xml_names(parts):
-        text = "\n".join(_values(_parse(parts[name], name)))
-        leaked = _leaks(text, targets)
+        units = list(_units(_parse(parts[name], name)))
+        human = "\n".join(v for v, h in units if h)
+        structural = "\n".join(v for v, h in units if not h)
+        # structural attributes only ever get regex detection, so only
+        # regex-detectable kinds are required to be absent there
+        leaked = _leaks(human, targets) + _leaks(
+            structural, [f for f in targets if f.kind in _PATTERN_KINDS])
         if leaked:
             raise DocumentError(f"redaction verification failed in {name}: "
                                 f"{len(leaked)} finding(s) still present")
@@ -361,6 +415,7 @@ def redact_docx(src: Path, dst: Path, detect_fn: DetectFn, version: Version) -> 
     publik = version == Version.PUBLIK
     types = _content_types(parts)
     _reject_embeddings(parts, types)
+    _reject_unsupported(parts, types)
     cache: dict[str, list[Finding]] = {}
     raw_detect = detect_fn
 
