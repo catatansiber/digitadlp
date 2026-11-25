@@ -63,7 +63,7 @@ Dipilih **A** oleh pengguna. C bisa ditambah nanti jika ada GPU.
 - **Sensor sungguhan**: teks dihapus dari file (PyMuPDF redaction untuk PDF, ganti teks untuk DOCX), metadata dibersihkan.
 - **Cara sensor**: ganti dengan blok hitam atau penanda seperti `[NIK]`. Penyamaran sebagian (contoh `3201********0001`) untuk versi Internal.
 - **Peran**: Pengunggah, Pemeriksa (menyetujui rilis), Admin (atur aturan dan pengguna).
-- **Teknologi**: Python + FastAPI (backend), web UI sederhana, PostgreSQL (metadata + audit), penyimpanan file lokal terenkripsi.
+- **Teknologi** (dipilih pengguna, opsi 1): Python + FastAPI (backend), React (frontend), PostgreSQL (metadata + audit), penyimpanan file lokal terenkripsi.
 - **Layar cek**: dokumen tampil dengan sorotan tiap temuan. Pemeriksa bisa tambah, hapus, atau ubah temuan sebelum setuju.
 
 ## Keputusan saya dari cek pembangun (bisa dikoreksi)
@@ -73,11 +73,11 @@ Dipilih **A** oleh pengguna. C bisa ditambah nanti jika ada GPU.
 - **Alur cek**: versi Publik wajib disetujui. Pemeriksa tidak boleh menyetujui upload sendiri. Kalau sumber diubah setelah disetujui, persetujuan batal. "Rilis" = versi bisa diunduh/diekspor, dan tercatat di audit.
 - **Beban**: proses lewat antrean kerja (background job), agar dokumen tebal tidak membuat web macet.
 
-## Pertanyaan terbuka (untuk pengguna)
+## Keputusan pengguna (lanjutan)
 
-- Siapa boleh membaca versi Rahasia?
-- Bagaimana membedakan nama pegawai dan nama warga?
-- Login pakai akun lokal atau sistem yang sudah ada (SSO/LDAP)?
+- **Akses versi Rahasia**: pegawai di unit kerja pemilik dokumen + Pemeriksa. Pengguna punya atribut unit kerja.
+- **Nama pegawai vs warga**: dicocokkan ke daftar pegawai (impor dari SIMPEG/Excel oleh Admin). Nama yang cocok = pegawai (tampil di Internal); lainnya = warga (disensor). Pemeriksa bisa koreksi.
+- **Login**: akun lokal di aplikasi (password di-hash, dikelola Admin).
 
 ## Diserahkan ke pembangun
 
