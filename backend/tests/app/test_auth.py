@@ -12,7 +12,7 @@ SALAH = "Nama pengguna atau kata sandi salah."
 
 
 def login(client, username="budi", password="rahasia123"):
-    return client.post("/auth/login", json={"username": username, "password": password})
+    return client.post("/api/auth/login", json={"username": username, "password": password})
 
 
 def test_login_ok_sets_httponly_cookie(client, app_db):
@@ -25,7 +25,7 @@ def test_login_ok_sets_httponly_cookie(client, app_db):
     h = r.headers["set-cookie"].lower()
     assert "digitadlp_session=" in h and "httponly" in h and "samesite=strict" in h
     assert "secure" not in h  # cookie_secure=False in test settings
-    assert client.get("/auth/me").json()["id"] == body["id"]
+    assert client.get("/api/auth/me").json()["id"] == body["id"]
 
 
 def test_cookie_secure_when_enabled(app_settings, app_db):
@@ -59,7 +59,7 @@ def test_wrong_password_same_message_as_unknown_user(client, app_db):
 
 
 def test_me_without_session_401(client):
-    r = client.get("/auth/me")
+    r = client.get("/api/auth/me")
     assert r.status_code == 401
     assert r.json()["detail"] == "Sesi berakhir. Silakan masuk lagi."
 
@@ -70,7 +70,7 @@ def test_expired_session_401(client, app_db):
     sess = app_db.query(AuthSession).one()
     sess.expires_at = utcnow() - timedelta(minutes=1)
     app_db.commit()
-    r = client.get("/auth/me")
+    r = client.get("/api/auth/me")
     assert r.status_code == 401
     assert r.json()["detail"] == "Sesi berakhir. Silakan masuk lagi."
 
@@ -88,7 +88,7 @@ def test_inactive_user_401(client, app_db):
     login(client)
     u.active = False
     app_db.commit()
-    assert client.get("/auth/me").status_code == 401
+    assert client.get("/api/auth/me").status_code == 401
 
 
 def test_inactive_user_cannot_login(client, app_db):
@@ -160,9 +160,9 @@ def test_token_not_stored_plain(client, app_db):
 def test_logout_deletes_session(client, app_db):
     make_user(app_db, "budi")
     login(client)
-    assert client.post("/auth/logout").status_code == 200
+    assert client.post("/api/auth/logout").status_code == 200
     assert app_db.query(AuthSession).count() == 0
-    assert client.get("/auth/me").status_code == 401
+    assert client.get("/api/auth/me").status_code == 401
 
 
 def test_password_is_argon2id(app_db):
@@ -260,11 +260,11 @@ def test_login_logout_audited(client, app_db):
     from digitadlp.app.models import AuditEvent
     from .conftest import make_user as _mk
     u = _mk(app_db, "audituser")
-    client.post("/auth/login", json={"username": "audituser", "password": "salah-sekali"})
-    client.post("/auth/login", json={"username": "audituser", "password": "rahasia123"})
-    client.post("/auth/logout")
+    client.post("/api/auth/login", json={"username": "audituser", "password": "salah-sekali"})
+    client.post("/api/auth/login", json={"username": "audituser", "password": "rahasia123"})
+    client.post("/api/auth/logout")
     for _ in range(6):
-        client.post("/auth/login", json={"username": "audituser", "password": "x"})
+        client.post("/api/auth/login", json={"username": "audituser", "password": "x"})
     app_db.expire_all()
     ev = list(app_db.scalars(_s(AuditEvent).order_by(AuditEvent.at)))
     acts = [e.action for e in ev]

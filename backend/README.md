@@ -57,7 +57,7 @@ export DIGITADLP_FERNET_KEY=...hasil di atas...
 python -m digitadlp.app create-admin --username admin --unit "Sekretariat"
 ```
 
-Kata sandi diminta dua kali di terminal. Pengguna lain, unit kerja, daftar pegawai, dan aturan label dikelola Admin lewat `/admin/...`.
+Kata sandi diminta dua kali di terminal. Pengguna lain, unit kerja, daftar pegawai, dan aturan label dikelola Admin lewat `/api/admin/...`.
 
 ## Variabel lingkungan
 
@@ -70,10 +70,11 @@ Kata sandi diminta dua kali di terminal. Pengguna lain, unit kerja, daftar pegaw
 | `DIGITADLP_SESSION_HOURS` | Lama sesi login. Default 8. |
 | `DIGITADLP_COOKIE_SECURE` | Default `1` (cookie hanya lewat HTTPS). Set `0` hanya untuk dev lewat http. |
 | `DIGITADLP_RUN_WORKER` | Default `1`: worker pemrosesan berjalan di dalam proses aplikasi. |
+| `DIGITADLP_FRONTEND_DIR` | Folder hasil build antarmuka web (default `frontend/dist` di repo bila ada). Disajikan di `/`; API di `/api`. |
 | `DIGITADLP_JOB_STALE_MINUTES` | Job berjalan tanpa heartbeat selama ini diambil ulang. Default 30. |
 | `DIGITADLP_NER=fake` | **Hanya dev/test**: NER palsu tanpa model, nama orang tidak terdeteksi. Jangan dipakai di produksi. |
 
-Daftar pegawai tidak lagi dibaca dari variabel lingkungan: Admin mengunggahnya lewat `POST /admin/employees` (xlsx, kolom `Nama` dan opsional `NIP`). File disimpan terenkripsi di `storage/_config/` dan dimuat lagi saat aplikasi mulai.
+Daftar pegawai tidak lagi dibaca dari variabel lingkungan: Admin mengunggahnya lewat `POST /api/admin/employees` (xlsx, kolom `Nama` dan opsional `NIP`). File disimpan terenkripsi di `storage/_config/` dan dimuat lagi saat aplikasi mulai.
 
 ## Menjalankan
 
@@ -92,13 +93,14 @@ Letakkan reverse proxy HTTPS (mis. nginx) di depan `127.0.0.1:8000`.
 
 ## API (ringkas)
 
-Semua endpoint butuh login (cookie sesi dari `POST /auth/login`), kecuali login itu sendiri.
+Semua endpoint butuh login (cookie sesi dari `POST /api/auth/login`), kecuali login itu sendiri.
 
-- `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`
-- `POST /documents` (multipart `file`, PDF/DOCX, maks. 50 MB), `GET /documents`, `GET /documents/{id}`
-- `PUT /documents/{id}/label`, `POST /documents/{id}/corrections`, `/approve`, `/return`, `/reupload`, `/release`
-- `GET /documents/{id}/versions/{publik|internal|rahasia}`
-- Admin: `GET/POST /admin/units`, `GET/POST /admin/users`, `PATCH /admin/users/{id}`, `POST /admin/employees`, `GET/PUT /admin/label-rules`, `GET /admin/audit?document_id=&actor_id=&limit=100` (maks. 500, terbaru dulu)
+- `POST /api/auth/login`, `POST /auth/logout`, `GET /auth/me`
+- `POST /api/documents` (multipart `file`, PDF/DOCX, maks. 50 MB), `GET /documents`, `GET /documents/{id}`
+- `PUT /api/documents/{id}/label`, `POST /documents/{id}/corrections`, `/approve`, `/return`, `/reupload`, `/release`
+- `GET /api/documents/{id}/versions/{publik|internal|rahasia}`
+- `GET /api/documents/{id}/text` (teks sumber per halaman; hak akses sama dengan melihat temuan, diaudit)
+- Admin: `GET/POST /api/admin/units`, `GET/POST /admin/users`, `PATCH /admin/users/{id}`, `POST /admin/employees`, `GET/PUT /admin/label-rules`, `GET /admin/audit?document_id=&actor_id=&limit=100` (maks. 500, terbaru dulu)
 
 ## Tes
 

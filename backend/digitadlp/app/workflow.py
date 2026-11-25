@@ -206,6 +206,7 @@ def return_to_owner(db: Session, user: User, doc: Document, reason: str) -> Docu
     if find_patterns(reason):  # alasan tidak disimpan, tetapi tetap ditolak bila memuat data pribadi
         raise WorkflowError(422, "Rincian audit tidak boleh memuat data pribadi.")
     doc.status = Status.DIKEMBALIKAN
+    doc.return_reason = reason or None
     _record(db, user, "kembalikan", doc, detail=f"alasan_len={len(reason or '')}")
     db.commit()
     return doc
@@ -224,6 +225,7 @@ def reupload(db: Session, store: FileStore, user: User, doc: Document,
     doc.approved_at = None
     doc.reviewer_id = None
     doc.findings_json = "[]"
+    doc.return_reason = None
     doc.status = Status.DIPROSES
     db.execute(delete(Correction).where(Correction.document_id == doc.id))
     enqueue(db, JobKind.DETEKSI, doc)

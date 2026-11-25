@@ -1,10 +1,11 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.engine import Engine as DbEngine
 
 from ..detect.employees import EmployeeDirectory
@@ -37,6 +38,50 @@ def build_engine() -> Engine:
             "Untuk dev/test tanpa model: DIGITADLP_NER=fake."
         )
     return Engine(IndoBertNer(path), EmployeeDirectory(set()))
+
+
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; img-src 'self' data:; style-src 'self'; "
+        "script-src 'self'; frame-ancestors 'none'"),
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+}
+ASSET_CACHE = "public, max-age=31536000, immutable"
+
+
+def _frontend_dir(settings: Settings) -> Path | None:
+    if settings.frontend_dir:
+        d = Path(settings.frontend_dir)
+    else:  # <repo>/frontend/dist relatif ke paket (backend/digitadlp/app/main.py)
+        d = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+    return d.resolve() if d.is_dir() else None
+
+
+def _mount_frontend(app: FastAPI, dist: Path) -> None:
+    index = dist / "index.html"
+
+    def _inside(rel: str) -> Path | None:
+        p = (dist / rel).resolve()
+        return p if p.is_relative_to(dist) and p.is_file() else None
+
+    @app.get("/assets/{path:path}", include_in_schema=False)
+    def asset(path: str):
+        p = _inside(f"assets/{path}")
+        if p is None:
+            raise HTTPException(404, "Tidak ditemukan.")
+        return FileResponse(p, headers={"Cache-Control": ASSET_CACHE})
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def spa(path: str):
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(404, "Tidak ditemukan.")
+        p = _inside(path) if path else None
+        if p is not None and p != index:
+            return FileResponse(p)
+        if Path(path).suffix:  # berkas yang tidak ada: jangan balas index.html
+            raise HTTPException(404, "Tidak ditemukan.")
+        return FileResponse(index, headers={"Cache-Control": "no-store"})
 
 
 def create_app(settings: Settings, engine: Engine | None = None) -> FastAPI:
@@ -75,9 +120,19 @@ def create_app(settings: Settings, engine: Engine | None = None) -> FastAPI:
         # Jangan memantulkan nilai input (bisa berisi data pribadi).
         return JSONResponse({"detail": MSG_INVALID}, status_code=422)
 
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next):
+        response = await call_next(request)
+        for k, v in SECURITY_HEADERS.items():
+            response.headers[k] = v
+        return response
+
     app.include_router(auth.router)
     app.include_router(documents.router)
     app.include_router(admin.router)
+    dist = _frontend_dir(settings)
+    if dist is not None and (dist / "index.html").is_file():
+        _mount_frontend(app, dist)
     return app
 
 

@@ -1,6 +1,7 @@
 import json
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -10,9 +11,11 @@ from ..access import VERSIONS, can_download, can_see_rahasia, can_view
 from ..audit import record
 from ..models import Correction, Document, Role, Status, Unit, User
 from ..storage import StoreError
+from ...redact.docx import extract_docx_text
+from ...redact.pdf import extract_pdf_text
 from ..security import current_user, get_db
 
-router = APIRouter(prefix="/documents", tags=["documents"])
+router = APIRouter(prefix="/api/documents", tags=["documents"])
 MSG_NOT_FOUND = "Dokumen tidak ditemukan."
 
 
@@ -27,15 +30,20 @@ def _iso(dt):
     return dt.isoformat() if dt else None
 
 
-def _out(doc: Document, db: Session | None = None, detail: bool = False) -> dict:
+def _out(doc: Document, db: Session, detail: bool = False) -> dict:
+    owner = db.get(User, doc.owner_id)
+    unit = db.get(Unit, doc.unit_id)
     out = {
         "id": doc.id, "title": doc.title, "ext": doc.ext, "status": doc.status.value,
         "owner_id": doc.owner_id, "unit_id": doc.unit_id, "label": doc.label,
         "suggested_label": doc.suggested_label, "reviewer_id": doc.reviewer_id,
         "approved_at": _iso(doc.approved_at), "released_at": _iso(doc.released_at),
         "revision": doc.revision, "created_at": _iso(doc.created_at),
+        "owner_name": owner.full_name if owner else None,
+        "unit_name": unit.name if unit else None,
     }
     if detail:
+        out["return_reason"] = doc.return_reason
         out["findings"] = json.loads(doc.findings_json or "[]")
         out["corrections"] = [
             {"id": c.id, "op": c.op.value, "kind": c.kind, "text": c.text, "page": c.page,
@@ -67,7 +75,7 @@ async def upload_doc(request: Request, file: UploadFile = File(...),
         raise HTTPException(403, workflow.MSG_FORBIDDEN)
     data = await _read(file)
     doc = _run(workflow.upload, db, request.app.state.store, user, file.filename or "", data)
-    return _out(doc)
+    return _out(doc, db)
 
 
 @router.get("")
@@ -87,7 +95,8 @@ def list_docs(status: str | None = None, mine: bool = False,
     return [
         {"id": d.id, "title": d.title, "ext": d.ext, "status": d.status.value,
          "label": d.label, "suggested_label": d.suggested_label,
-         "owner": owner, "unit": unit, "created_at": _iso(d.created_at)}
+         "owner": owner, "unit": unit, "owner_name": owner, "unit_name": unit,
+         "created_at": _iso(d.created_at)}
         for d, owner, unit in db.execute(q)
     ]
 
@@ -131,6 +140,25 @@ def get_doc(doc_id: str, user: User = Depends(current_user), db: Session = Depen
     return _out(doc, db, detail=can_see_rahasia(user, doc))
 
 
+MSG_DOC_ERROR = "Teks dokumen tidak dapat dibaca."
+
+
+@router.get("/{doc_id}/text")
+def get_text(doc_id: str, request: Request, user: User = Depends(current_user),
+             db: Session = Depends(get_db)):
+    doc = _load(db, user, doc_id)
+    if not can_see_rahasia(user, doc):
+        raise HTTPException(404, MSG_NOT_FOUND)
+    try:
+        with request.app.state.store.decrypted(doc.id, f"source.{doc.ext}") as src:
+            pages = extract_pdf_text(src) if doc.ext == "pdf" else extract_docx_text(src)
+    except Exception:  # noqa: BLE001 - jangan bocorkan isi/galat ekstraksi
+        raise HTTPException(422, MSG_DOC_ERROR) from None
+    record(db, user, "unduh", doc, detail="versi=teks")
+    db.commit()
+    return JSONResponse({"pages": list(pages)}, headers={"Cache-Control": "no-store"})
+
+
 class LabelIn(BaseModel):
     label: str
 
@@ -150,7 +178,7 @@ class ReasonIn(BaseModel):
 def put_label(doc_id: str, body: LabelIn, user: User = Depends(current_user),
               db: Session = Depends(get_db)):
     doc = _load(db, user, doc_id)
-    return _out(_run(workflow.set_label, db, user, doc, body.label))
+    return _out(_run(workflow.set_label, db, user, doc, body.label), db)
 
 
 @router.post("/{doc_id}/corrections")
@@ -166,14 +194,14 @@ def post_correction(doc_id: str, body: CorrectionIn, request: Request,
 def post_approve(doc_id: str, user: User = Depends(current_user),
                  db: Session = Depends(get_db)):
     doc = _load(db, user, doc_id)
-    return _out(_run(workflow.approve, db, user, doc))
+    return _out(_run(workflow.approve, db, user, doc), db)
 
 
 @router.post("/{doc_id}/return")
 def post_return(doc_id: str, body: ReasonIn, user: User = Depends(current_user),
                 db: Session = Depends(get_db)):
     doc = _load(db, user, doc_id)
-    return _out(_run(workflow.return_to_owner, db, user, doc, body.reason))
+    return _out(_run(workflow.return_to_owner, db, user, doc, body.reason), db)
 
 
 @router.post("/{doc_id}/reupload")
@@ -182,11 +210,11 @@ async def post_reupload(doc_id: str, request: Request, file: UploadFile = File(.
     doc = _load(db, user, doc_id)
     data = await _read(file)
     return _out(_run(workflow.reupload, db, request.app.state.store, user, doc,
-                     file.filename or "", data))
+                     file.filename or "", data), db)
 
 
 @router.post("/{doc_id}/release")
 def post_release(doc_id: str, user: User = Depends(current_user),
                  db: Session = Depends(get_db)):
     doc = _load(db, user, doc_id, allow_admin=True)
-    return _out(_run(workflow.release, db, user, doc))
+    return _out(_run(workflow.release, db, user, doc), db)
