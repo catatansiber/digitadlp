@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Finding, Kind, Label
 from ..policy import suggest_label
+from ..detect.patterns import find_patterns
 from .audit import record
 from .corrections import _norm
 from .jobs import enqueue
@@ -193,11 +194,19 @@ def approve(db: Session, user: User, doc: Document) -> Document:
     return doc
 
 
+MAX_REASON = 200
+
+
 def return_to_owner(db: Session, user: User, doc: Document, reason: str) -> Document:
     _role(user, Role.PEMERIKSA)
     _state(doc, Status.MENUNGGU_CEK)
+    reason = reason or ""
+    if len(reason) > MAX_REASON:
+        raise WorkflowError(422, "Alasan terlalu panjang (maksimal 200 karakter).")
+    if find_patterns(reason):  # alasan tidak disimpan, tetapi tetap ditolak bila memuat data pribadi
+        raise WorkflowError(422, "Rincian audit tidak boleh memuat data pribadi.")
     doc.status = Status.DIKEMBALIKAN
-    _record(db, user, "kembalikan", doc, detail=reason or "")
+    _record(db, user, "kembalikan", doc, detail=f"alasan_len={len(reason or '')}")
     db.commit()
     return doc
 

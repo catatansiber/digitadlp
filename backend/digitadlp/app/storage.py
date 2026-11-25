@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import tempfile
 import time
 from contextlib import contextmanager
@@ -131,12 +132,29 @@ class FileStore:
         removed = 0
         for f in tmpdir.iterdir():
             try:
-                if f.is_file() and (older_than_seconds <= 0 or f.stat().st_mtime <= cutoff):
+                if not (older_than_seconds <= 0 or f.stat().st_mtime <= cutoff):
+                    continue
+                if f.is_dir() and not f.is_symlink():
+                    shutil.rmtree(f, ignore_errors=True)
+                    removed += 1
+                elif f.is_file() or f.is_symlink():
                     f.unlink()
                     removed += 1
             except FileNotFoundError:
                 pass
         return removed
+
+    @contextmanager
+    def scratch_dir(self) -> Iterator[Path]:
+        """Direktori sementara 0700 di root/.tmp; dihapus saat keluar."""
+        tmpdir = self.root / ".tmp"
+        tmpdir.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(tmpdir, 0o700)
+        path = Path(tempfile.mkdtemp(dir=tmpdir, prefix="scratch-"))
+        try:
+            yield path
+        finally:
+            shutil.rmtree(path, ignore_errors=True)
 
     @contextmanager
     def decrypted(self, doc_id: str, name: str) -> Iterator[Path]:

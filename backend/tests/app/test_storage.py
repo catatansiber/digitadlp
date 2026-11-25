@@ -1,4 +1,5 @@
 import os
+import time
 import stat
 
 import pytest
@@ -170,3 +171,20 @@ def test_delete_source(store):
     assert not store.exists(DOC, "source.docx")
     with pytest.raises(ValueError):
         store.delete_source("../x")
+
+
+def test_scratch_dir_inside_tmp_0700_and_removed(store):
+    with store.scratch_dir() as d:
+        assert d.parent == store.root / ".tmp"
+        assert stat.S_IMODE(d.stat().st_mode) == 0o700
+        (d / "x").write_bytes(b"1")
+    assert not d.exists()
+
+
+def test_purge_tmp_removes_leftover_dirs(store):
+    with store.scratch_dir() as d:
+        (d / "x").write_bytes(b"1")
+        old = time.time() - 7200
+        os.utime(d, (old, old))
+        assert store.purge_tmp(older_than_seconds=3600) == 1
+        assert not d.exists()

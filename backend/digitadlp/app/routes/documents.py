@@ -82,7 +82,7 @@ def list_docs(status: str | None = None, mine: bool = False,
         q = q.where(Document.status == Status(status))
     if mine:
         q = q.where(Document.owner_id == user.id)
-    elif user.role not in (Role.PEMERIKSA, Role.ADMIN):
+    elif user.role != Role.PEMERIKSA:
         q = q.where(or_(Document.owner_id == user.id, Document.unit_id == user.unit_id))
     return [
         {"id": d.id, "title": d.title, "ext": d.ext, "status": d.status.value,

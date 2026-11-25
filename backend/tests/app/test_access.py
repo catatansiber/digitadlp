@@ -141,7 +141,8 @@ def test_list_filters(client_as, work, make_pdf, wapp):
     assert len(mate.get("/documents").json()) == 1
     assert mate.get("/documents?mine=true").json() == []
     assert client_as("pengunggah", unit="Unit C").get("/documents").json() == []
-    assert client_as("admin", unit="Unit C").get("/documents").json()
+    assert client_as("admin", unit="Unit C").get("/documents").json() == []
+    assert client_as("admin", unit="Unit A").get("/documents").json()
 
 
 @pytest.mark.parametrize("role,same,version,status,exp", [

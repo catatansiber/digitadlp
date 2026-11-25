@@ -401,3 +401,20 @@ def test_engine_directory_swap_is_atomic_and_read_once(db, store, make_pdf, monk
     doc = _doc(db, store, make_pdf(TEXT))
     processing.compute_deteksi(db, store, eng, doc)
     assert seen and all(d is new for d in seen)
+
+
+def test_render_versi_uses_store_scratch(db, store, engine, make_pdf, monkeypatch):
+    import digitadlp.app.jobs as _jobs
+    doc = _doc(db, store, make_pdf(TEXT))
+    _run(db, store, engine, JobKind.DETEKSI, doc)
+    seen = []
+    orig = _jobs.render_versi
+
+    def spy(db_, store_, engine_, doc_, tmpdir, touch=None):
+        seen.append(tmpdir)
+        assert tmpdir.parent == store.root / ".tmp"
+        return orig(db_, store_, engine_, doc_, tmpdir, touch)
+
+    monkeypatch.setattr(_jobs, "render_versi", spy)
+    job = _run(db, store, engine, JobKind.VERSI, doc)
+    assert job.state == JobState.SELESAI and seen and not seen[0].exists()

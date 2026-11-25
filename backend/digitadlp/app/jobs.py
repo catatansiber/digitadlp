@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import tempfile
 import threading
 import time
 import traceback
@@ -169,8 +168,8 @@ def run_job(
             ok = _finalize(db, job_id, token, revision, doc_id, JobState.SELESAI, None,
                            lambda d: apply_deteksi(db, d, result))
         else:
-            with tempfile.TemporaryDirectory(prefix="digitadlp-") as tmp:
-                files = render_versi(db, store, engine, doc, Path(tmp), touch)
+            with store.scratch_dir() as tmp:
+                files = render_versi(db, store, engine, doc, tmp, touch)
                 db.rollback()
                 ok = _finalize(db, job_id, token, revision, doc_id, JobState.SELESAI, None,
                                lambda d: store_versi(store, d, files))
