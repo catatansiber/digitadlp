@@ -38,7 +38,7 @@ def login(aapp):
     def _login(username, password="rahasia123"):
         c = TestClient(aapp)
         clients.append(c)
-        r = c.post("/auth/login", json={"username": username, "password": password})
+        r = c.post("/api/auth/login", json={"username": username, "password": password})
         assert r.status_code == 200, r.text
         return c
 
@@ -74,43 +74,43 @@ def _actions(aapp):
 
 
 def test_units_crud(admin, aapp):
-    r = admin.post("/admin/units", json={"name": "Bidang IKP"})
+    r = admin.post("/api/admin/units", json={"name": "Bidang IKP"})
     assert r.status_code == 201, r.text
-    names = [u["name"] for u in admin.get("/admin/units").json()]
+    names = [u["name"] for u in admin.get("/api/admin/units").json()]
     assert "Bidang IKP" in names and "Sekretariat" in names
-    r = admin.post("/admin/units", json={"name": "Bidang IKP"})
+    r = admin.post("/api/admin/units", json={"name": "Bidang IKP"})
     assert r.status_code == 409
     assert "unit_dibuat" in _actions(aapp)
 
 
 def test_admin_crud_user(admin, aapp, login):
-    unit = admin.post("/admin/units", json={"name": "Bidang IKP"}).json()
-    r = admin.post("/admin/users", json={"username": "rina", "full_name": "Rina",
+    unit = admin.post("/api/admin/units", json={"name": "Bidang IKP"}).json()
+    r = admin.post("/api/admin/users", json={"username": "rina", "full_name": "Rina",
                                           "role": "pengunggah", "unit_id": unit["id"],
                                           "password": "pendek"})
     assert r.status_code == 422
     assert r.json()["detail"] == "Kata sandi minimal 10 karakter."
-    r = admin.post("/admin/users", json={"username": "rina", "full_name": "Rina",
+    r = admin.post("/api/admin/users", json={"username": "rina", "full_name": "Rina",
                                           "role": "pengunggah", "unit_id": unit["id"],
                                           "password": "rahasia12345"})
     assert r.status_code == 201, r.text
     uid = r.json()["id"]
     assert "password" not in r.text and "password_hash" not in r.json()
     assert r.json()["unit"] == "Bidang IKP" and r.json()["active"] is True
-    r = admin.post("/admin/users", json={"username": "rina", "full_name": "X",
+    r = admin.post("/api/admin/users", json={"username": "rina", "full_name": "X",
                                           "role": "pengunggah", "unit_id": unit["id"],
                                           "password": "rahasia12345"})
     assert r.status_code == 409
-    assert any(u["id"] == uid for u in admin.get("/admin/users").json())
-    r = admin.patch(f"/admin/users/{uid}", json={"role": "pemeriksa"})
+    assert any(u["id"] == uid for u in admin.get("/api/admin/users").json())
+    r = admin.patch(f"/api/admin/users/{uid}", json={"role": "pemeriksa"})
     assert r.status_code == 200 and r.json()["role"] == "pemeriksa"
-    r = admin.patch(f"/admin/users/{uid}", json={"password": "kataSandiBaru1"})
+    r = admin.patch(f"/api/admin/users/{uid}", json={"password": "kataSandiBaru1"})
     assert r.status_code == 200
     c = login("rina", "kataSandiBaru1")
-    assert c.get("/auth/me").json()["role"] == "pemeriksa"
-    assert admin.patch("/admin/users/" + "0" * 32, json={"active": False}).status_code == 404
-    assert admin.patch(f"/admin/users/{uid}", json={"unit_id": "0" * 32}).status_code == 422
-    assert admin.patch(f"/admin/users/{uid}", json={"role": "raja"}).status_code == 422
+    assert c.get("/api/auth/me").json()["role"] == "pemeriksa"
+    assert admin.patch("/api/admin/users/" + "0" * 32, json={"active": False}).status_code == 404
+    assert admin.patch(f"/api/admin/users/{uid}", json={"unit_id": "0" * 32}).status_code == 422
+    assert admin.patch(f"/api/admin/users/{uid}", json={"role": "raja"}).status_code == 422
     acts = _actions(aapp)
     assert "user_dibuat" in acts and acts.count("user_diubah") >= 2
     with aapp.state.session_factory() as db:
@@ -123,30 +123,30 @@ def test_deactivate_kills_sessions(admin, aapp, login):
         u = make_user(db, "siti")
         uid = u.id
     c = login("siti")
-    assert c.get("/auth/me").status_code == 200
-    r = admin.patch(f"/admin/users/{uid}", json={"active": False})
+    assert c.get("/api/auth/me").status_code == 200
+    r = admin.patch(f"/api/admin/users/{uid}", json={"active": False})
     assert r.status_code == 200 and r.json()["active"] is False
     with aapp.state.session_factory() as db:
         assert db.scalars(select(AuthSession).where(AuthSession.user_id == uid)).all() == []
-    admin.patch(f"/admin/users/{uid}", json={"active": True})
-    assert c.get("/auth/me").status_code == 401  # sesi lama tetap mati
+    admin.patch(f"/api/admin/users/{uid}", json={"active": True})
+    assert c.get("/api/auth/me").status_code == 401  # sesi lama tetap mati
 
 
 def test_admin_cannot_lock_self_out(admin, aapp):
-    me = admin.get("/auth/me").json()["id"]
+    me = admin.get("/api/auth/me").json()["id"]
     for body in ({"active": False}, {"role": "pemeriksa"}):
-        r = admin.patch(f"/admin/users/{me}", json=body)
+        r = admin.patch(f"/api/admin/users/{me}", json=body)
         assert r.status_code == 409
         assert r.json()["detail"] == "Admin tidak bisa menonaktifkan atau menurunkan peran akunnya sendiri."
-    assert admin.get("/auth/me").json()["role"] == "admin"
+    assert admin.get("/api/auth/me").json()["role"] == "admin"
 
 
 ROUTES = [
-    ("get", "/admin/units", None), ("post", "/admin/units", {"name": "x"}),
-    ("get", "/admin/users", None), ("post", "/admin/users", {}),
-    ("patch", "/admin/users/" + "0" * 32, {}), ("get", "/admin/label-rules", None),
-    ("put", "/admin/label-rules", {}), ("get", "/admin/audit", None),
-    ("post", "/admin/employees", None),
+    ("get", "/api/admin/units", None), ("post", "/api/admin/units", {"name": "x"}),
+    ("get", "/api/admin/users", None), ("post", "/api/admin/users", {}),
+    ("patch", "/api/admin/users/" + "0" * 32, {}), ("get", "/api/admin/label-rules", None),
+    ("put", "/api/admin/label-rules", {}), ("get", "/api/admin/audit", None),
+    ("post", "/api/admin/employees", None),
 ]
 
 
@@ -163,7 +163,7 @@ def test_non_admin_403(aapp, login, role, method, path, body):
 
 def test_anonymous_401(aapp):
     with TestClient(aapp) as c:
-        assert c.get("/admin/users").status_code == 401
+        assert c.get("/api/admin/users").status_code == 401
 
 
 def _detect(aapp, login):
@@ -175,17 +175,17 @@ def _detect(aapp, login):
 
 
 def _findings(aapp, up, pdf):
-    r = up.post("/documents", files={"file": ("s.pdf", pdf.read_bytes(), "application/pdf")})
+    r = up.post("/api/documents", files={"file": ("s.pdf", pdf.read_bytes(), "application/pdf")})
     assert r.status_code == 201, r.text
     run_pending(aapp.state.session_factory, aapp.state.store, aapp.state.engine)
-    return up.get(f"/documents/{r.json()['id']}").json()
+    return up.get(f"/api/documents/{r.json()['id']}").json()
 
 
 def test_employee_import_reloads_directory(admin, aapp, login, make_pdf, app_settings):
     up = _detect(aapp, login)
     before = _findings(aapp, up, make_pdf(TEXT))
     assert any(f["kind"] == "NAME_CITIZEN" for p in before["findings"] for f in p)
-    r = admin.post("/admin/employees", files={"file": ("pegawai.xlsx", _xlsx([NAME]), XLSX)})
+    r = admin.post("/api/admin/employees", files={"file": ("pegawai.xlsx", _xlsx([NAME]), XLSX)})
     assert r.status_code == 200, r.text
     assert r.json() == {"names": 1, "nips": 0}
     after = _findings(aapp, up, make_pdf(TEXT))
@@ -202,39 +202,39 @@ def test_employee_import_reloads_directory(admin, aapp, login, make_pdf, app_set
 
 
 def test_employee_import_bad_file_keeps_old(admin, aapp):
-    admin.post("/admin/employees", files={"file": ("p.xlsx", _xlsx([NAME]), XLSX)})
-    r = admin.post("/admin/employees", files={"file": ("p.xlsx", b"bukan xlsx", XLSX)})
+    admin.post("/api/admin/employees", files={"file": ("p.xlsx", _xlsx([NAME]), XLSX)})
+    r = admin.post("/api/admin/employees", files={"file": ("p.xlsx", b"bukan xlsx", XLSX)})
     assert r.status_code == 422
     assert r.json()["detail"] == "File daftar pegawai tidak bisa dibaca. Gunakan .xlsx dengan kolom Nama."
     assert aapp.state.engine.directory.is_employee(NAME)
-    r = admin.post("/admin/employees", files={"file": ("p.txt", b"x", "text/plain")})
+    r = admin.post("/api/admin/employees", files={"file": ("p.txt", b"x", "text/plain")})
     assert r.status_code == 415
 
 
 def test_label_rules_applied(admin, aapp, login, make_pdf):
-    rules = admin.get("/admin/label-rules").json()
+    rules = admin.get("/api/admin/label-rules").json()
     assert set(rules) == {k.value for k in Kind}
     assert rules["NAME_CITIZEN"] == "internal" and rules["NIK"] == "rahasia"
     up = _detect(aapp, login)
     assert _findings(aapp, up, make_pdf(TEXT))["suggested_label"] == "internal"
     new = {k: "publik" for k in rules}
-    r = admin.put("/admin/label-rules", json=new)
+    r = admin.put("/api/admin/label-rules", json=new)
     assert r.status_code == 200 and r.json() == new
-    assert admin.get("/admin/label-rules").json() == new
+    assert admin.get("/api/admin/label-rules").json() == new
     assert _findings(aapp, up, make_pdf(TEXT))["suggested_label"] == "publik"
     assert "aturan_label" in _actions(aapp)
 
 
 def test_label_rules_validation_atomic(admin):
-    before = admin.get("/admin/label-rules").json()
-    r = admin.put("/admin/label-rules", json={"NIK": "publik", "BOGUS": "publik"})
+    before = admin.get("/api/admin/label-rules").json()
+    r = admin.put("/api/admin/label-rules", json={"NIK": "publik", "BOGUS": "publik"})
     assert r.status_code == 422
-    r = admin.put("/admin/label-rules", json={"NIK": "rahasiaa"})
+    r = admin.put("/api/admin/label-rules", json={"NIK": "rahasiaa"})
     assert r.status_code == 422
-    assert admin.get("/admin/label-rules").json() == before
-    r = admin.put("/admin/label-rules", json={"NIK": "internal"})
+    assert admin.get("/api/admin/label-rules").json() == before
+    r = admin.put("/api/admin/label-rules", json={"NIK": "internal"})
     assert r.status_code == 200
-    got = admin.get("/admin/label-rules").json()
+    got = admin.get("/api/admin/label-rules").json()
     assert got["NIK"] == "internal" and got["NAME_CITIZEN"] == before["NAME_CITIZEN"]
 
 
@@ -243,16 +243,16 @@ def test_audit_list(admin, aapp, login, make_pdf):
     d = _findings(aapp, up, make_pdf(TEXT))
     with aapp.state.session_factory() as db:
         up_id = db.scalar(select(User.id).where(User.username == "up"))
-    r = admin.get("/admin/audit", params={"document_id": d["id"]})
+    r = admin.get("/api/admin/audit", params={"document_id": d["id"]})
     assert r.status_code == 200
     ev = r.json()
     assert [e["action"] for e in ev] == ["deteksi_selesai", "upload"]  # terbaru dulu
     assert set(ev[0]) >= {"id", "at", "actor_id", "action", "document_id", "detail"}
-    r = admin.get("/admin/audit", params={"actor_id": up_id})
+    r = admin.get("/api/admin/audit", params={"actor_id": up_id})
     assert {e["action"] for e in r.json()} == {"masuk", "upload"}
-    assert len(admin.get("/admin/audit", params={"limit": 1}).json()) == 1
-    assert admin.get("/admin/audit", params={"limit": 501}).status_code == 422
-    assert admin.get("/admin/audit", params={"limit": 0}).status_code == 422
+    assert len(admin.get("/api/admin/audit", params={"limit": 1}).json()) == 1
+    assert admin.get("/api/admin/audit", params={"limit": 501}).status_code == 422
+    assert admin.get("/api/admin/audit", params={"limit": 0}).status_code == 422
 
 
 def _sessions(aapp, uid):
@@ -264,27 +264,27 @@ def test_password_reset_and_role_change_kill_target_sessions(admin, aapp, login)
     with aapp.state.session_factory() as db:
         uid = make_user(db, "siti").id
     c = login("siti")
-    admin.patch(f"/admin/users/{uid}", json={"password": "SandiBaru12345"})
-    assert _sessions(aapp, uid) == [] and c.get("/auth/me").status_code == 401
+    admin.patch(f"/api/admin/users/{uid}", json={"password": "SandiBaru12345"})
+    assert _sessions(aapp, uid) == [] and c.get("/api/auth/me").status_code == 401
     c = login("siti", "SandiBaru12345")
-    admin.patch(f"/admin/users/{uid}", json={"role": "pemeriksa"})
-    assert _sessions(aapp, uid) == [] and c.get("/auth/me").status_code == 401
+    admin.patch(f"/api/admin/users/{uid}", json={"role": "pemeriksa"})
+    assert _sessions(aapp, uid) == [] and c.get("/api/auth/me").status_code == 401
 
 
 def test_admin_self_password_reset_keeps_current_session(admin, aapp, login):
     other = login("admin")
-    me = admin.get("/auth/me").json()["id"]
+    me = admin.get("/api/auth/me").json()["id"]
     assert len(_sessions(aapp, me)) == 2
-    r = admin.patch(f"/admin/users/{me}", json={"password": "AdminBaru12345"})
+    r = admin.patch(f"/api/admin/users/{me}", json={"password": "AdminBaru12345"})
     assert r.status_code == 200
-    assert admin.get("/auth/me").status_code == 200
-    assert other.get("/auth/me").status_code == 401
+    assert admin.get("/api/auth/me").status_code == 200
+    assert other.get("/api/auth/me").status_code == 401
     assert len(_sessions(aapp, me)) == 1
 
 
 def test_full_name_only_logged_when_changed(admin, aapp):
-    me = admin.get("/auth/me").json()
-    admin.patch(f"/admin/users/{me['id']}", json={"full_name": me["full_name"]})
+    me = admin.get("/api/auth/me").json()
+    admin.patch(f"/api/admin/users/{me['id']}", json={"full_name": me["full_name"]})
     with aapp.state.session_factory() as db:
         ev = db.scalars(select(AuditEvent).where(AuditEvent.action == "user_diubah")).one()
     assert "nama" not in ev.detail

@@ -17,6 +17,7 @@ class Settings:
     job_stale_minutes: int = 30
     cookie_secure: bool = True
     run_worker: bool = True
+    frontend_dir: str | None = None
 
     @classmethod
     def from_env(cls, require_fernet: bool = True) -> "Settings":
@@ -36,4 +37,5 @@ class Settings:
             ),
             cookie_secure=_bool(env.get("DIGITADLP_COOKIE_SECURE"), True),
             run_worker=_bool(env.get("DIGITADLP_RUN_WORKER"), True),
+            frontend_dir=env.get("DIGITADLP_FRONTEND_DIR") or None,
         )

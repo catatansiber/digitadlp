@@ -210,11 +210,11 @@ def _content_types(parts: dict[str, bytes]) -> dict[str, str]:
 
 
 EMBED_MSG = ("Dokumen berisi objek tersemat (Excel/Word/OLE). Hapus atau ganti "
-             "objek tersebut, lalu upload lagi.")
+             "objek tersebut, lalu unggah lagi.")
 
 
 UNSUPPORTED_MSG = ("Dokumen berisi bagian yang tidak didukung (mis. altChunk/makro). "
-                   "Simpan ulang sebagai .docx biasa, lalu upload lagi.")
+                   "Simpan ulang sebagai .docx biasa, lalu unggah lagi.")
 _FONT_TYPES = ("application/x-font",
                "application/vnd.openxmlformats-officedocument.obfuscatedfont")
 

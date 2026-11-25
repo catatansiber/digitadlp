@@ -27,11 +27,11 @@ EXTS = ("pdf", "docx")
 MAX_TEXT = 200
 
 MSG_FORBIDDEN = "Anda tidak punya akses untuk tindakan ini."
-MSG_SELF = "Pemeriksa tidak boleh menyetujui dokumen yang ia upload sendiri."
+MSG_SELF = "Pemeriksa tidak boleh menyetujui dokumen yang ia unggah sendiri."
 MSG_EXT = "Format file tidak didukung. Gunakan PDF atau DOCX."
 MSG_SIZE = "Ukuran file melebihi batas 50 MB."
 MSG_EMPTY = "File kosong."
-MSG_BROKEN = "Dokumen terenkripsi atau rusak. Buka kunci atau simpan ulang file, lalu upload lagi."
+MSG_BROKEN = "Dokumen terenkripsi atau rusak. Buka kunci atau simpan ulang file, lalu unggah lagi."
 
 
 class WorkflowError(Exception):
@@ -203,9 +203,10 @@ def return_to_owner(db: Session, user: User, doc: Document, reason: str) -> Docu
     reason = reason or ""
     if len(reason) > MAX_REASON:
         raise WorkflowError(422, "Alasan terlalu panjang (maksimal 200 karakter).")
-    if find_patterns(reason):  # alasan tidak disimpan, tetapi tetap ditolak bila memuat data pribadi
+    if find_patterns(reason):  # alasan disimpan (hanya terlihat oleh pemeriksa/unit pemilik), jadi ditolak bila memuat data pribadi
         raise WorkflowError(422, "Rincian audit tidak boleh memuat data pribadi.")
     doc.status = Status.DIKEMBALIKAN
+    doc.return_reason = reason or None
     _record(db, user, "kembalikan", doc, detail=f"alasan_len={len(reason or '')}")
     db.commit()
     return doc
@@ -224,6 +225,7 @@ def reupload(db: Session, store: FileStore, user: User, doc: Document,
     doc.approved_at = None
     doc.reviewer_id = None
     doc.findings_json = "[]"
+    doc.return_reason = None
     doc.status = Status.DIPROSES
     db.execute(delete(Correction).where(Correction.document_id == doc.id))
     enqueue(db, JobKind.DETEKSI, doc)

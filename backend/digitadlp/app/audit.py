@@ -8,7 +8,7 @@ from .models import AuditEvent, Document, User
 ACTIONS = frozenset(
     {
         "masuk", "gagal_masuk", "keluar", "upload", "deteksi_selesai",
-        "ubah_label", "koreksi", "setujui", "kembalikan", "rilis", "unduh",
+        "ubah_label", "koreksi", "setujui", "kembalikan", "rilis", "unduh", "lihat_teks",
         "akses_ditolak", "user_dibuat", "user_diubah", "impor_pegawai",
         "aturan_label", "unit_dibuat",
     }

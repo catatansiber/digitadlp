@@ -33,6 +33,7 @@ def app_settings(tmp_path):
         storage_dir=str(tmp_path / "storage"),
         cookie_secure=False,
         run_worker=False,
+        frontend_dir=str(tmp_path / "no-dist"),
     )
 
 

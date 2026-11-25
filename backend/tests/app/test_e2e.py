@@ -16,7 +16,7 @@ from digitadlp.detect.ner import FakeNer
 from .conftest import make_user
 
 NIK = "6474015203880002"
-MSG = "Dokumen terenkripsi atau rusak. Buka kunci atau simpan ulang file, lalu upload lagi."
+MSG = "Dokumen terenkripsi atau rusak. Buka kunci atau simpan ulang file, lalu unggah lagi."
 PDF = "application/pdf"
 
 
@@ -25,7 +25,7 @@ def up(app):
     with app.state.session_factory() as db:
         make_user(db, "up")
     c = TestClient(app)
-    assert c.post("/auth/login", json={"username": "up", "password": "rahasia123"}).status_code == 200
+    assert c.post("/api/auth/login", json={"username": "up", "password": "rahasia123"}).status_code == 200
     yield c
     c.close()
 
@@ -41,7 +41,7 @@ def _count(app):
 
 
 def test_txt_415(up, app):
-    r = up.post("/documents", files={"file": ("a.txt", b"hello", "text/plain")})
+    r = up.post("/api/documents", files={"file": ("a.txt", b"hello", "text/plain")})
     assert r.status_code == 415
     assert r.json()["detail"] == "Format file tidak didukung. Gunakan PDF atau DOCX."
     assert _count(app) == 0
@@ -49,7 +49,7 @@ def test_txt_415(up, app):
 
 def test_too_large_413(up, app, monkeypatch):
     monkeypatch.setattr(workflow, "MAX_UPLOAD", 1000)
-    r = up.post("/documents", files={"file": ("a.pdf", b"x" * 2000, PDF)})
+    r = up.post("/api/documents", files={"file": ("a.pdf", b"x" * 2000, PDF)})
     assert r.status_code == 413
     assert _count(app) == 0 and _docs_dir(app) == []
 
@@ -58,7 +58,7 @@ def test_encrypted_pdf_422(up, app, make_pdf, tmp_path):
     src = fitz.open(make_pdf(f"NIK {NIK}"))
     enc = tmp_path / "enc.pdf"
     src.save(enc, encryption=fitz.PDF_ENCRYPT_AES_256, owner_pw="o", user_pw="u")
-    r = up.post("/documents", files={"file": ("enc.pdf", enc.read_bytes(), PDF)})
+    r = up.post("/api/documents", files={"file": ("enc.pdf", enc.read_bytes(), PDF)})
     assert r.status_code == 422
     assert r.json() == {"detail": MSG}
     assert _count(app) == 0 and _docs_dir(app) == []
@@ -66,30 +66,30 @@ def test_encrypted_pdf_422(up, app, make_pdf, tmp_path):
 
 def test_corrupt_upload_422(up, app):
     for name in ("a.pdf", "a.docx"):
-        r = up.post("/documents", files={"file": (name, b"not a document", PDF)})
+        r = up.post("/api/documents", files={"file": (name, b"not a document", PDF)})
         assert r.status_code == 422 and r.json() == {"detail": MSG}
     assert _count(app) == 0 and _docs_dir(app) == []
 
 
 def test_unknown_and_malicious_ids_404(up):
-    assert up.get("/documents/" + "0" * 32).status_code == 404
-    assert up.get("/documents/" + "0" * 32 + "/versions/publik").status_code == 404
-    assert up.get("/documents/..%2F..%2Fetc/versions/publik").status_code == 404
-    assert up.get("/documents/not-hex/versions/publik").status_code == 404
-    assert up.post("/documents/" + "0" * 32 + "/approve").status_code == 404
+    assert up.get("/api/documents/" + "0" * 32).status_code == 404
+    assert up.get("/api/documents/" + "0" * 32 + "/versions/publik").status_code == 404
+    assert up.get("/api/documents/..%2F..%2Fetc/versions/publik").status_code == 404
+    assert up.get("/api/documents/not-hex/versions/publik").status_code == 404
+    assert up.post("/api/documents/" + "0" * 32 + "/approve").status_code == 404
 
 
 def test_bad_version_404(up, make_pdf):
-    r = up.post("/documents", files={"file": ("s.pdf", make_pdf("halo").read_bytes(), PDF)})
+    r = up.post("/api/documents", files={"file": ("s.pdf", make_pdf("halo").read_bytes(), PDF)})
     doc_id = r.json()["id"]
     for v in ("..%2Fsource.pdf", "source", "bogus"):
-        assert up.get(f"/documents/{doc_id}/versions/{v}").status_code == 404
+        assert up.get(f"/api/documents/{doc_id}/versions/{v}").status_code == 404
     # belum disetujui: versi ada di daftar tapi belum boleh diunduh
-    assert up.get(f"/documents/{doc_id}/versions/rahasia").status_code == 403
+    assert up.get(f"/api/documents/{doc_id}/versions/rahasia").status_code == 403
 
 
 def test_filename_not_used_in_storage(up, app, make_pdf):
-    r = up.post("/documents", files={"file": ("../../evil.pdf", make_pdf("halo").read_bytes(), PDF)})
+    r = up.post("/api/documents", files={"file": ("../../evil.pdf", make_pdf("halo").read_bytes(), PDF)})
     assert r.status_code == 201
     d = app.state.store.root / r.json()["id"]
     assert sorted(x.name for x in d.iterdir()) == ["source.pdf.enc"]
@@ -97,11 +97,11 @@ def test_filename_not_used_in_storage(up, app, make_pdf):
 
 
 def test_validation_error_does_not_echo_input(up):
-    r = up.post("/documents/" + "0" * 32 + "/corrections", json={"op": NIK})
+    r = up.post("/api/documents/" + "0" * 32 + "/corrections", json={"op": NIK})
     assert r.status_code == 422
     assert r.json() == {"detail": "Data yang dikirim tidak lengkap atau tidak valid."}
     assert NIK not in r.text
-    r = up.post("/auth/login", json={"username": NIK})
+    r = up.post("/api/auth/login", json={"username": NIK})
     assert r.status_code == 422 and NIK not in r.text
 
 
@@ -114,13 +114,13 @@ def test_lifespan_starts_and_stops_worker(app_settings, tmp_path, make_pdf):
         make_user(db, "up")
     with TestClient(app) as c:
         assert app.state.worker is not None
-        c.post("/auth/login", json={"username": "up", "password": "rahasia123"})
-        doc_id = c.post("/documents", files={"file": ("s.pdf", make_pdf(f"NIK {NIK}").read_bytes(), PDF)}).json()["id"]
+        c.post("/api/auth/login", json={"username": "up", "password": "rahasia123"})
+        doc_id = c.post("/api/documents", files={"file": ("s.pdf", make_pdf(f"NIK {NIK}").read_bytes(), PDF)}).json()["id"]
         for _ in range(100):
-            if c.get(f"/documents/{doc_id}").json()["status"] == Status.MENUNGGU_CEK:
+            if c.get(f"/api/documents/{doc_id}").json()["status"] == Status.MENUNGGU_CEK:
                 break
             time.sleep(0.1)
-        assert c.get(f"/documents/{doc_id}").json()["status"] == "menunggu_cek"
+        assert c.get(f"/api/documents/{doc_id}").json()["status"] == "menunggu_cek"
     assert app.state.worker is None
     assert not any(t.name == "digitadlp-worker" and t.is_alive() for t in threading.enumerate())
     app.state.db_engine.dispose()

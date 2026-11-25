@@ -15,7 +15,7 @@ from ..models import AuditEvent, AuthSession, LabelRule, Role, Unit, User
 from ..processing import label_rules
 from ..security import COOKIE_NAME, _digest, get_db, hash_password, require_role
 
-router = APIRouter(prefix="/admin", tags=["admin"],
+router = APIRouter(prefix="/api/admin", tags=["admin"],
                    dependencies=[Depends(require_role(Role.ADMIN))])
 admin_user = require_role(Role.ADMIN)
 

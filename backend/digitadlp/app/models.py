@@ -143,6 +143,7 @@ class Document(Base):
         Boolean, default=False, server_default=false()
     )
     revision: Mapped[int] = mapped_column(Integer, default=0)
+    return_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
