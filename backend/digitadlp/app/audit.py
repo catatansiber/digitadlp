@@ -10,7 +10,7 @@ ACTIONS = frozenset(
         "masuk", "gagal_masuk", "keluar", "upload", "deteksi_selesai",
         "ubah_label", "koreksi", "setujui", "kembalikan", "rilis", "unduh",
         "akses_ditolak", "user_dibuat", "user_diubah", "impor_pegawai",
-        "aturan_label",
+        "aturan_label", "unit_dibuat",
     }
 )
 MAX_DETAIL = 200

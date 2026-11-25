@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,10 +26,24 @@ from .storage import FileStore
 VERSIONS = ("publik", "internal", "rahasia")
 
 
-@dataclass
 class Engine:
-    ner: NerDetector
-    directory: EmployeeDirectory
+    """NER + direktori pegawai. Direktori bisa diganti saat berjalan (impor
+    admin); penggantian memakai kunci dan referensi objek baru yang tidak
+    diubah lagi, jadi job cukup membaca `directory` sekali di awal."""
+
+    def __init__(self, ner: NerDetector, directory: EmployeeDirectory):
+        self.ner = ner
+        self._directory = directory
+        self._lock = threading.Lock()
+
+    @property
+    def directory(self) -> EmployeeDirectory:
+        with self._lock:
+            return self._directory
+
+    def set_directory(self, directory: EmployeeDirectory) -> None:
+        with self._lock:
+            self._directory = directory
 
 
 Touch = Callable[[], None]
@@ -64,11 +79,12 @@ def label_rules(db: Session) -> dict[Kind, Label]:
     return rules
 
 
-def _analyze(src: Path, ext: str, engine: Engine, corrections):
+def _analyze(src: Path, ext: str, engine: Engine, corrections, directory=None):
     """Temuan (sudah dikoreksi) per halaman, temuan ekstra PDF, dan detect_fn."""
+    directory = directory if directory is not None else engine.directory
 
     def base(text: str) -> list[Finding]:
-        return detect(text, engine.ner, engine.directory)
+        return detect(text, engine.ner, directory)
 
     fn = corrected_detect_fn(base, corrections)
     if ext == "pdf":
@@ -133,14 +149,15 @@ def render_versi(
     """Buat ketiga versi ke tmpdir (tidak menyentuh store atau DB)."""
     ext, doc_id = _ext(doc), doc.id
     corrections = load_corrections(db, doc_id)
+    directory = engine.directory  # sekali per job
     out: dict[str, Path] = {}
     with store.decrypted(doc_id, f"source.{ext}") as src:
         # Selalu hitung ulang dari sumber; findings_json tidak dipercaya.
         if ext == "pdf":
-            pages, _, fn = _analyze(src, ext, engine, corrections)
+            pages, _, fn = _analyze(src, ext, engine, corrections, directory)
         else:
             fn = corrected_detect_fn(
-                lambda t: detect(t, engine.ner, engine.directory), corrections
+                lambda t: detect(t, engine.ner, directory), corrections
             )
         touch()
         for v in VERSIONS:

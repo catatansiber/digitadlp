@@ -28,38 +28,77 @@ huggingface-cli download cahya/bert-base-indonesian-NER --local-dir ./models/ind
 
 lalu salin folder itu ke server. `cahya/bert-base-indonesian-NER` hanyalah contoh kandidat yang perlu Anda evaluasi sendiri; model harus berupa model *token classification* bahasa Indonesia dengan label entitas orang (PER).
 
+## Basis data (PostgreSQL) dan migrasi
+
+Produksi memakai PostgreSQL (SQLite hanya untuk dev/tes):
+
+```bash
+pip install -e .[ner,postgres]
+export DIGITADLP_DATABASE_URL=postgresql+psycopg://digitadlp:SANDI@127.0.0.1/digitadlp
+alembic upgrade head          # jalankan dari folder backend/, juga setiap kali update
+```
+
+## Kunci enkripsi file
+
+File sumber, ketiga versi, dan daftar pegawai disimpan terenkripsi (Fernet). Buat kunci sekali:
+
+```bash
+python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"
+export DIGITADLP_FERNET_KEY=...hasil di atas...
+```
+
+> **Peringatan: cadangkan kunci ini di tempat aman, terpisah dari cadangan folder penyimpanan.**
+> Kunci hilang = semua file tersimpan tidak bisa dibuka lagi. Kunci bocor = siapa pun yang punya
+> salinan folder penyimpanan bisa membaca dokumen.
+
+## Akun Admin pertama
+
+```bash
+python -m digitadlp.app create-admin --username admin --unit "Sekretariat"
+```
+
+Kata sandi diminta dua kali di terminal. Pengguna lain, unit kerja, daftar pegawai, dan aturan label dikelola Admin lewat `/admin/...`.
+
 ## Variabel lingkungan
 
 | Variabel | Keterangan |
 |---|---|
-| `DIGITADLP_NER_PATH` | Wajib. Folder model IndoBERT NER. |
-| `DIGITADLP_EMPLOYEES_XLSX` | Opsional. Daftar pegawai (.xlsx); jika kosong, direktori pegawai kosong. |
-| `DIGITADLP_STORAGE` | Folder penyimpanan dokumen. Default `./storage`. |
-| `DIGITADLP_NER=fake` | Hanya untuk dev/test: memakai NER palsu tanpa model (nama tidak terdeteksi). Jangan dipakai di produksi. |
+| `DIGITADLP_FERNET_KEY` | Wajib. Kunci Fernet (lihat di atas). |
+| `DIGITADLP_DATABASE_URL` | Default `sqlite:///./digitadlp.db`. Produksi: PostgreSQL. |
+| `DIGITADLP_NER_PATH` | Wajib di produksi. Folder model IndoBERT NER. |
+| `DIGITADLP_STORAGE` | Folder penyimpanan terenkripsi. Default `./storage`. |
+| `DIGITADLP_SESSION_HOURS` | Lama sesi login. Default 8. |
+| `DIGITADLP_COOKIE_SECURE` | Default `1` (cookie hanya lewat HTTPS). Set `0` hanya untuk dev lewat http. |
+| `DIGITADLP_RUN_WORKER` | Default `1`: worker pemrosesan berjalan di dalam proses aplikasi. |
+| `DIGITADLP_JOB_STALE_MINUTES` | Job berjalan tanpa heartbeat selama ini diambil ulang. Default 30. |
+| `DIGITADLP_NER=fake` | **Hanya dev/test**: NER palsu tanpa model, nama orang tidak terdeteksi. Jangan dipakai di produksi. |
+
+Daftar pegawai tidak lagi dibaca dari variabel lingkungan: Admin mengunggahnya lewat `POST /admin/employees` (xlsx, kolom `Nama` dan opsional `NIP`). File disimpan terenkripsi di `storage/_config/` dan dimuat lagi saat aplikasi mulai.
 
 ## Menjalankan
 
 ```bash
-export DIGITADLP_NER_PATH=./models/indobert-ner
 python -m digitadlp
-# atau: uvicorn digitadlp.__main__:app --host 127.0.0.1 --port 8000
+# sama dengan: uvicorn digitadlp.app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-Server mendengarkan di `127.0.0.1:8000`.
+**Jalankan tepat satu proses aplikasi** (`--workers 1`, jangan `gunicorn -w N`). Alasannya:
 
-## API
+- Worker pemrosesan dokumen berjalan sebagai thread di dalam proses aplikasi.
+- Daftar pegawai yang diimpor Admin dimuat ulang di memori proses yang menerima permintaan itu saja; proses lain tetap memakai daftar lama sampai restart.
+- Pembatas percobaan login juga disimpan di memori proses.
 
-- `POST /documents` (multipart `file`, PDF atau DOCX, maks. 50 MB): upload dan deteksi. Mengembalikan `id`, `suggested_label`, dan `findings`.
-- `POST /documents/{id}/versions`: membuat versi `publik`, `internal`, `rahasia`.
-- `GET /documents/{id}/versions/{version}`: mengunduh versi tersebut.
+Letakkan reverse proxy HTTPS (mis. nginx) di depan `127.0.0.1:8000`.
 
-Contoh:
+## API (ringkas)
 
-```bash
-ID=$(curl -s -F file=@surat.pdf http://127.0.0.1:8000/documents | python -c "import sys,json;print(json.load(sys.stdin)['id'])")
-curl -s -X POST http://127.0.0.1:8000/documents/$ID/versions
-curl -s -o publik.pdf http://127.0.0.1:8000/documents/$ID/versions/publik
-```
+Semua endpoint butuh login (cookie sesi dari `POST /auth/login`), kecuali login itu sendiri.
+
+- `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`
+- `POST /documents` (multipart `file`, PDF/DOCX, maks. 50 MB), `GET /documents`, `GET /documents/{id}`
+- `PUT /documents/{id}/label`, `POST /documents/{id}/corrections`, `/approve`, `/return`, `/reupload`, `/release`
+- `GET /documents/{id}/versions/{publik|internal|rahasia}`
+- Admin: `GET/POST /admin/units`, `GET/POST /admin/users`, `PATCH /admin/users/{id}`, `POST /admin/employees`, `GET/PUT /admin/label-rules`, `GET /admin/audit?document_id=&actor_id=&limit=100` (maks. 500, terbaru dulu)
 
 ## Tes
 
@@ -72,4 +111,3 @@ pytest -v
 - Gambar yang luasnya < 20% halaman pada halaman PDF bertext tidak di-OCR.
 - Gambar EMF/WMF/SVG serta objek tertanam, makro, dan altChunk pada DOCX ditolak.
 - NIK hanya dikenali jika ditulis 16 digit berurutan atau dikelompokkan 4-4-4-4.
-- Belum ada autentikasi (direncanakan di Plan 2): jangan buka ke jaringan; biarkan di 127.0.0.1.

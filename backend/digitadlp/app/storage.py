@@ -15,6 +15,8 @@ _DOC_ID = re.compile(r"[0-9a-f]{32}")
 _NAME = re.compile(r"(source|publik|internal|rahasia)\.(pdf|docx)")
 _VERSIONS = ("publik", "internal", "rahasia")
 _EXTS = ("pdf", "docx")
+_BLOBS = frozenset({"employees.xlsx"})
+_CONFIG_DIR = "_config"
 
 
 class StoreError(Exception):
@@ -45,8 +47,25 @@ class FileStore:
         _check(doc_id, name)
         return self.root / doc_id / (name + ".enc")
 
+    def _blob_path(self, name: str) -> Path:
+        if not isinstance(name, str) or name not in _BLOBS:
+            raise ValueError("Nama file konfigurasi tidak valid.")
+        return self.root / _CONFIG_DIR / (name + ".enc")
+
+    def put_blob(self, name: str, data: bytes) -> None:
+        self._write(self._blob_path(name), data)
+
+    def get_blob(self, name: str) -> bytes | None:
+        """None bila belum ada."""
+        path = self._blob_path(name)
+        if not path.is_file():
+            return None
+        return self._decrypt(path)
+
     def put(self, doc_id: str, name: str, data: bytes) -> None:
-        path = self._path(doc_id, name)
+        self._write(self._path(doc_id, name), data)
+
+    def _write(self, path: Path, data: bytes) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         token = self._fernet.encrypt(data)
         fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".w", suffix=".part")
@@ -67,7 +86,9 @@ class FileStore:
         self.put(doc_id, name, Path(path).read_bytes())
 
     def get(self, doc_id: str, name: str) -> bytes:
-        path = self._path(doc_id, name)
+        return self._decrypt(self._path(doc_id, name))
+
+    def _decrypt(self, path: Path) -> bytes:
         try:
             token = path.read_bytes()
         except FileNotFoundError:
@@ -81,6 +102,16 @@ class FileStore:
 
     def exists(self, doc_id: str, name: str) -> bool:
         return self._path(doc_id, name).is_file()
+
+    def delete_source(self, doc_id: str, keep: str | None = None) -> None:
+        """Hapus source.* kecuali ekstensi `keep`."""
+        _check(doc_id)
+        for ext in _EXTS:
+            if ext != keep:
+                try:
+                    self._path(doc_id, f"source.{ext}").unlink()
+                except FileNotFoundError:
+                    pass
 
     def delete_versions(self, doc_id: str) -> None:
         _check(doc_id)

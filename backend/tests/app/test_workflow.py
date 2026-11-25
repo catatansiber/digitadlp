@@ -228,3 +228,15 @@ def test_visibility(client_as, work, make_pdf):
     assert stranger.post(f"/documents/{doc_id}/approve").status_code == 404
     ids = [x["id"] for x in stranger.get("/documents").json()]
     assert doc_id not in ids
+
+
+def test_reupload_other_ext_deletes_old_source(client_as, work, make_pdf, make_docx, wapp):
+    up, doc_id = _ready(client_as, work, make_pdf)
+    rev = client_as("pemeriksa")
+    rev.post(f"/documents/{doc_id}/return", json={"reason": "Ganti format"})
+    r = up.post(f"/documents/{doc_id}/reupload",
+                files={"file": ("surat.docx", make_docx().read_bytes(), "application/octet-stream")})
+    assert r.status_code == 200, r.text
+    store = wapp.state.store
+    assert store.exists(doc_id, "source.docx")
+    assert not store.exists(doc_id, "source.pdf")

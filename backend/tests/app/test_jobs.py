@@ -379,3 +379,25 @@ def test_deteksi_keeps_reviewer_label(db, store, engine, make_pdf):
     db.commit()
     _run(db, store, engine, JobKind.DETEKSI, doc)
     assert doc.suggested_label == "rahasia" and doc.label == "publik"
+
+
+def test_engine_directory_swap_is_atomic_and_read_once(db, store, make_pdf, monkeypatch):
+    from digitadlp.app import processing
+    from digitadlp.detect.employees import EmployeeDirectory
+    eng = processing.Engine(FakeNer({}), EmployeeDirectory(set()))
+    old = eng.directory
+    new = EmployeeDirectory.from_names(["Siti Rahmawati"])
+    eng.set_directory(new)
+    assert eng.directory is new and eng.directory is not old
+    seen = []
+    real = processing.detect
+
+    def spy(text, ner, directory):
+        seen.append(directory)
+        eng.set_directory(EmployeeDirectory(set()))  # diganti di tengah job
+        return real(text, ner, directory)
+
+    monkeypatch.setattr(processing, "detect", spy)
+    doc = _doc(db, store, make_pdf(TEXT))
+    processing.compute_deteksi(db, store, eng, doc)
+    assert seen and all(d is new for d in seen)

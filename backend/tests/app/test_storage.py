@@ -140,3 +140,33 @@ def test_purge_tmp_older_than(store, tmp_path):
     os.utime(old, (past, past))
     assert store.purge_tmp(older_than_seconds=3600) == 1
     assert not old.exists() and new.exists()
+
+
+def test_blob_roundtrip_encrypted(store):
+    assert store.get_blob("employees.xlsx") is None
+    store.put_blob("employees.xlsx", b"PK isi " + NIK)
+    raw = (store.root / "_config" / "employees.xlsx.enc").read_bytes()
+    assert NIK not in raw
+    assert store.get_blob("employees.xlsx") == b"PK isi " + NIK
+
+
+@pytest.mark.parametrize("name", ["../employees.xlsx", "x.xlsx", "employees.xlsx/..", "", None,
+                                  "source.pdf"])
+def test_blob_name_restricted(store, name):
+    with pytest.raises(ValueError):
+        store.put_blob(name, b"x")
+    with pytest.raises(ValueError):
+        store.get_blob(name)
+
+
+def test_delete_source(store):
+    store.put(DOC, "source.pdf", b"a")
+    store.put(DOC, "source.docx", b"b")
+    store.put(DOC, "publik.pdf", b"c")
+    store.delete_source(DOC, keep="docx")
+    assert not store.exists(DOC, "source.pdf")
+    assert store.exists(DOC, "source.docx") and store.exists(DOC, "publik.pdf")
+    store.delete_source(DOC)
+    assert not store.exists(DOC, "source.docx")
+    with pytest.raises(ValueError):
+        store.delete_source("../x")

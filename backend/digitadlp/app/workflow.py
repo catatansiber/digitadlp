@@ -1,9 +1,12 @@
 """Alur kerja dokumen: upload, label, koreksi, persetujuan, rilis."""
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from pathlib import PurePath
 
+import pymupdf
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
@@ -27,6 +30,7 @@ MSG_SELF = "Pemeriksa tidak boleh menyetujui dokumen yang ia upload sendiri."
 MSG_EXT = "Format file tidak didukung. Gunakan PDF atau DOCX."
 MSG_SIZE = "Ukuran file melebihi batas 50 MB."
 MSG_EMPTY = "File kosong."
+MSG_BROKEN = "Dokumen terenkripsi atau rusak. Buka kunci atau simpan ulang file, lalu upload lagi."
 
 
 class WorkflowError(Exception):
@@ -64,7 +68,23 @@ def _ext_of(filename: str, data: bytes) -> str:
         raise WorkflowError(413, MSG_SIZE)
     if not data:
         raise WorkflowError(422, MSG_EMPTY)
+    if not _readable(ext, data):
+        raise WorkflowError(422, MSG_BROKEN)
     return ext
+
+
+def _readable(ext: str, data: bytes) -> bool:
+    """Cek cepat di memori sebelum apa pun ditulis (PDF terenkripsi/rusak, DOCX bukan zip)."""
+    if ext == "pdf":
+        try:
+            d = pymupdf.open(stream=data, filetype="pdf")
+        except Exception:  # noqa: BLE001 - pymupdf melempar berbagai tipe
+            return False
+        try:
+            return d.is_pdf and not (d.needs_pass or d.is_encrypted)
+        finally:
+            d.close()
+    return zipfile.is_zipfile(io.BytesIO(data))
 
 
 def upload(db: Session, store: FileStore, user: User, filename: str, data: bytes) -> Document:
@@ -200,6 +220,8 @@ def reupload(db: Session, store: FileStore, user: User, doc: Document,
     enqueue(db, JobKind.DETEKSI, doc)
     _record(db, user, "upload", doc, detail=f"ext={ext} ulang")
     db.commit()
+    # Setelah commit: kegagalan hanya menyisakan file yatim, bukan dokumen tanpa sumber.
+    store.delete_source(doc.id, keep=ext)
     return doc
 
 
