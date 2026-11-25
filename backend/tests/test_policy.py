@@ -132,3 +132,16 @@ def test_placeholders():
     assert set(expect) == set(Kind)
     for k, v in expect.items():
         assert placeholder(k) == v
+
+
+def test_rules_override_label():
+    assert suggest_label([phone], {Kind.PHONE: Label.RAHASIA}) == Label.RAHASIA
+    assert suggest_label([phone], {Kind.PHONE: Label.PUBLIK}) == Label.PUBLIK
+    # kind not in rules uses default
+    assert suggest_label([nik, phone], {Kind.PHONE: Label.PUBLIK}) == Label.RAHASIA
+    assert suggest_label([], {Kind.PHONE: Label.RAHASIA}) == Label.PUBLIK
+
+
+def test_default_unchanged():
+    assert suggest_label([phone], None) == suggest_label([phone])
+    assert suggest_label([emp, nik]) == Label.RAHASIA

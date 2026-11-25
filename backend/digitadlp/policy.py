@@ -1,6 +1,7 @@
 """Label, action and masking policy."""
 
 import re
+from collections.abc import Mapping
 
 from .models import Action, Finding, Kind, Label, Strength, Version
 
@@ -25,7 +26,21 @@ _PLACEHOLDERS = {
 }
 
 
-def suggest_label(findings: list[Finding]) -> Label:
+_LABEL_ORDER = {Label.PUBLIK: 0, Label.INTERNAL: 1, Label.RAHASIA: 2}
+
+
+def default_label_for(f: Finding) -> Label:
+    if f.strength == Strength.STRONG:
+        return Label.RAHASIA
+    return Label.INTERNAL
+
+
+def suggest_label(
+    findings: list[Finding], rules: Mapping[Kind, Label] | None = None
+) -> Label:
+    if rules is not None:
+        labels = [rules.get(f.kind, default_label_for(f)) for f in findings]
+        return max(labels, key=_LABEL_ORDER.__getitem__, default=Label.PUBLIK)
     strengths = {f.strength for f in findings}
     if Strength.STRONG in strengths:
         return Label.RAHASIA
