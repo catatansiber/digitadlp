@@ -22,7 +22,7 @@ type DocDetail = {
   title: string;
   ext: string;
   status: string;
-  owner_id: number;
+  owner_id: string;
   label: string | null;
   suggested_label: string | null;
   owner_name: string | null;

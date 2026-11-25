@@ -5,10 +5,10 @@ import { meAs, server, uploader } from "../test/server";
 import { renderApp } from "../test/render";
 import type { Me } from "../api/types";
 
-const reviewer: Me = { id: 3, full_name: "Dedi Pemeriksa", role: "pemeriksa", unit: "Diskominfo" };
+const reviewer: Me = { id: "00000000000000000000000000000003", full_name: "Dedi Pemeriksa", role: "pemeriksa", unit: "Diskominfo" };
 
 const base = {
-  id: "d1", title: "SK Bansos.pdf", ext: "pdf", status: "menunggu_cek", owner_id: 1, unit_id: 1,
+  id: "d1", title: "SK Bansos.pdf", ext: "pdf", status: "menunggu_cek", owner_id: "00000000000000000000000000000001", unit_id: "u1",
   label: null, suggested_label: "rahasia", reviewer_id: null, approved_at: null, released_at: null,
   revision: 1, created_at: null, owner_name: "Budi Santoso", unit_name: "Bagian Umum",
   return_reason: null, corrections: [],
@@ -72,7 +72,7 @@ test('page=null findings in "Di luar halaman"', async () => {
 });
 
 test("self-approval button disabled with reason", async () => {
-  await open({ ...reviewer, id: 1 });
+  await open({ ...reviewer, id: "00000000000000000000000000000001" });
   const b = await screen.findByRole("button", { name: "Setujui & buat versi" });
   expect(b).toBeDisabled();
   expect(screen.getByText("Pemeriksa tidak boleh menyetujui dokumen yang ia upload sendiri.")).toBeInTheDocument();

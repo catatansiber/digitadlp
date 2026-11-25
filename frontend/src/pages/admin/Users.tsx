@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
 import { Button } from "../../components/Button";
@@ -30,10 +30,11 @@ export function Users() {
     if (!isAuthError(e)) setToast({ message: errText(e), kind: "error" });
   };
 
-  const patch = useMutation({
+  const patch: UseMutationResult<AdminUser, Error, { id: string; body: Patch }> = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Patch }) =>
       api<AdminUser>(`/admin/users/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: refresh,
+    onSettled: () => patch.reset(), // variabel (kata sandi) tidak tersisa di cache mutasi
     // Daftar dimuat ulang juga saat gagal agar pilihan kembali ke nilai server.
     onError: (e) => {
       fail(e);
@@ -41,13 +42,15 @@ export function Users() {
     },
   });
 
-  const create = useMutation({
+  const create: UseMutationResult<AdminUser, Error, Record<string, string>> = useMutation({
     mutationFn: (body: Record<string, string>) =>
       api<AdminUser>("/admin/users", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: () => {
       setToast({ message: "Pengguna ditambahkan.", kind: "info" });
+      setF((s) => ({ ...s, username: "", full_name: "" }));
       refresh();
     },
+    onSettled: () => create.reset(),
     onError: (e) => {
       if (!isAuthError(e)) setFormError(errText(e));
     },
@@ -62,8 +65,8 @@ export function Users() {
     if (!unitId) return setFormError("Unit kerja tidak ditemukan.");
     setFormError(null);
     create.mutate({ username: f.username, full_name: f.full_name, role: f.role, unit_id: unitId, password: f.password });
-    // Kata sandi tidak disimpan di state setelah dikirim.
-    setF((s) => ({ ...s, username: "", full_name: "", password: "" }));
+    // Kata sandi tidak disimpan di state setelah dikirim; kolom lain dikosongkan saat berhasil.
+    setF((s) => ({ ...s, password: "" }));
   }
 
   return (
@@ -134,7 +137,7 @@ export function Users() {
           </thead>
           <tbody>
             {users.data?.map((u) => {
-              const self = me != null && String(me.id) === String(u.id);
+              const self = me != null && me.id === u.id;
               return (
                 <tr key={u.id}>
                   <td>{u.username}</td>

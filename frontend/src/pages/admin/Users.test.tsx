@@ -4,7 +4,7 @@ import { http, HttpResponse } from "msw";
 import { admin, meAs, server } from "../../test/server";
 import { renderApp } from "../../test/render";
 
-// id admin di /auth/me bisa berupa string hex dari server; String() dipakai saat membandingkan.
+// id admin = id baris "sari" (string hex 32 karakter seperti dari server).
 const units = [
   { id: "u1", name: "Bagian Umum" },
   { id: "u2", name: "Diskominfo" },
@@ -15,7 +15,7 @@ let patches: { id: string; body: Record<string, unknown> }[];
 
 beforeEach(() => {
   users = [
-    { id: "2", username: "sari", full_name: "Sari Admin", role: "admin", unit_id: "u2", unit: "Diskominfo", active: true },
+    { id: "00000000000000000000000000000002", username: "sari", full_name: "Sari Admin", role: "admin", unit_id: "u2", unit: "Diskominfo", active: true },
     { id: "5", username: "budi", full_name: "Budi", role: "pengunggah", unit_id: "u1", unit: "Bagian Umum", active: true },
   ];
   posts = [];

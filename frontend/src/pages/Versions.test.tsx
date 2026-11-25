@@ -5,8 +5,8 @@ import { meAs, server, uploader } from "../test/server";
 import { renderApp } from "../test/render";
 import type { Me } from "../api/types";
 
-const reviewer: Me = { id: 3, full_name: "Dedi Pemeriksa", role: "pemeriksa", unit: "Diskominfo" };
-const adminU: Me = { id: 2, full_name: "Sari Admin", role: "admin", unit: "Diskominfo" };
+const reviewer: Me = { id: "00000000000000000000000000000003", full_name: "Dedi Pemeriksa", role: "pemeriksa", unit: "Diskominfo" };
+const adminU: Me = { id: "00000000000000000000000000000002", full_name: "Sari Admin", role: "admin", unit: "Diskominfo" };
 
 let doc: Record<string, unknown>;
 let downloads: string[];
@@ -38,7 +38,7 @@ let revoked: string[];
 let clicked: { href: string; download: string }[];
 
 beforeEach(() => {
-  doc = { id: "d1", title: "SK Bansos.pdf", ext: "pdf", status: "disetujui", owner_id: 1 };
+  doc = { id: "d1", title: "SK Bansos.pdf", ext: "pdf", status: "disetujui", owner_id: "00000000000000000000000000000001" };
   downloads = [];
   releases = 0;
   created = [];
