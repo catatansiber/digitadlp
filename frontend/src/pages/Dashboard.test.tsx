@@ -49,7 +49,11 @@ test("empty state", async () => {
 test("admin has no upload button", async () => {
   server.use(meAs(admin), http.get("/api/documents", () => HttpResponse.json([])));
   renderApp("/");
-  await screen.findByText("Belum ada dokumen.", { exact: false });
+  expect(
+    await screen.findByText(
+      "Belum ada dokumen. Dokumen diunggah oleh akun Pengguna; buat akunnya di menu Admin → Pengguna.",
+    ),
+  ).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Unggah dokumen/ })).toBeNull();
 });
 

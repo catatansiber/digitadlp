@@ -5,13 +5,11 @@ from datetime import timedelta
 import pytest
 from cryptography.fernet import Fernet
 
-from digitadlp.app.jobs import Engine, claim, enqueue, run_job, run_pending
+from digitadlp.app.jobs import claim, enqueue, run_job, run_pending
 from digitadlp.app.models import (
     AuditEvent, Document, Job, JobKind, JobState, Status, utcnow,
 )
 from digitadlp.app.storage import FileStore
-from digitadlp.detect.employees import EmployeeDirectory
-from digitadlp.detect.ner import FakeNer
 from digitadlp.models import Kind
 
 from .conftest import make_user
@@ -25,11 +23,6 @@ def store(tmp_path):
     return FileStore(tmp_path / "store", Fernet.generate_key().decode())
 
 
-@pytest.fixture
-def engine():
-    return Engine(FakeNer({"Siti Rahmawati": Kind.NAME_CITIZEN}), EmployeeDirectory(set()))
-
-
 def _doc(db, store, path, ext="pdf"):
     user = make_user(db, "uploader")
     doc = Document(title="Surat", ext=ext, owner_id=user.id, unit_id=user.unit_id)
@@ -39,42 +32,42 @@ def _doc(db, store, path, ext="pdf"):
     return doc
 
 
-def _run(db, store, engine, kind, doc):
+def _run(db, store, kind, doc):
     enqueue(db, kind, doc)
     db.commit()
     job = claim(db, 30)
     assert job is not None
-    run_job(db, store, engine, job)
+    run_job(db, store, job)
     db.refresh(doc)
     db.refresh(job)
     return job
 
 
-def test_deteksi_sets_findings_and_label(db, store, engine, make_pdf):
+def test_deteksi_sets_findings_and_label(db, store, make_pdf):
     doc = _doc(db, store, make_pdf(TEXT))
-    job = _run(db, store, engine, JobKind.DETEKSI, doc)
+    job = _run(db, store, JobKind.DETEKSI, doc)
     assert job.state == JobState.SELESAI
     assert doc.status == Status.MENUNGGU_CEK
     assert doc.label == "rahasia" and doc.suggested_label == "rahasia"
     pages = json.loads(doc.findings_json)
     assert len(pages) == 1
     kinds = {f["kind"] for f in pages[0]}
-    assert {"NIK", "NAME_CITIZEN"} <= kinds
+    assert "NIK" in kinds and "NAME_CITIZEN" not in kinds
     f = next(f for f in pages[0] if f["kind"] == "NIK")
     assert set(f) == {"kind", "text", "page", "start", "end", "source"}
     assert f["page"] == 0 and f["text"] == NIK
 
 
-def test_deteksi_docx(db, store, engine, make_docx):
+def test_deteksi_docx(db, store, make_docx):
     doc = _doc(db, store, make_docx(), ext="docx")
-    job = _run(db, store, engine, JobKind.DETEKSI, doc)
+    job = _run(db, store, JobKind.DETEKSI, doc)
     assert job.state == JobState.SELESAI and doc.status == Status.MENUNGGU_CEK
 
 
-def test_versi_creates_three_encrypted_files(db, store, engine, make_pdf):
+def test_versi_creates_three_encrypted_files(db, store, make_pdf):
     doc = _doc(db, store, make_pdf(TEXT))
-    _run(db, store, engine, JobKind.DETEKSI, doc)
-    job = _run(db, store, engine, JobKind.VERSI, doc)
+    _run(db, store, JobKind.DETEKSI, doc)
+    job = _run(db, store, JobKind.VERSI, doc)
     assert job.state == JobState.SELESAI
     assert doc.status == Status.DISETUJUI
     for v in ("publik", "internal", "rahasia"):
@@ -112,13 +105,13 @@ def test_claim_does_not_double_claim(db, store, make_pdf):
     assert claim(db, 30) is None
 
 
-def test_outdated_revision_job_noop(db, store, engine, make_pdf):
+def test_outdated_revision_job_noop(db, store, make_pdf):
     doc = _doc(db, store, make_pdf(TEXT))
     enqueue(db, JobKind.DETEKSI, doc)
     doc.revision += 1
     db.commit()
     job = claim(db, 30)
-    run_job(db, store, engine, job)
+    run_job(db, store, job)
     db.refresh(doc)
     db.refresh(job)
     assert job.state == JobState.SELESAI
@@ -126,12 +119,12 @@ def test_outdated_revision_job_noop(db, store, engine, make_pdf):
     assert db.query(AuditEvent).count() == 0
 
 
-def test_document_error_marks_gagal(db, store, engine, tmp_path, caplog):
+def test_document_error_marks_gagal(db, store, tmp_path, caplog):
     bad = tmp_path / "bad.pdf"
     bad.write_bytes(b"%PDF-1.4 rusak " + NIK.encode())
     doc = _doc(db, store, bad)
     with caplog.at_level(logging.INFO):
-        job = _run(db, store, engine, JobKind.VERSI, doc)
+        job = _run(db, store, JobKind.VERSI, doc)
     assert job.state == JobState.GAGAL and job.error_code == "dokumen_rusak"
     assert doc.status == Status.GAGAL
     for v in ("publik", "internal", "rahasia"):
@@ -139,7 +132,7 @@ def test_document_error_marks_gagal(db, store, engine, tmp_path, caplog):
     assert NIK not in caplog.text
 
 
-def test_internal_error_logged_without_message(db, store, engine, make_pdf, caplog, monkeypatch):
+def test_internal_error_logged_without_message(db, store, make_pdf, caplog, monkeypatch):
     doc = _doc(db, store, make_pdf(TEXT))
     import digitadlp.app.processing as processing
 
@@ -148,15 +141,15 @@ def test_internal_error_logged_without_message(db, store, engine, make_pdf, capl
 
     monkeypatch.setattr(processing, "extract_pdf_text", boom)
     with caplog.at_level(logging.INFO):
-        job = _run(db, store, engine, JobKind.DETEKSI, doc)
+        job = _run(db, store, JobKind.DETEKSI, doc)
     assert job.state == JobState.GAGAL and job.error_code == "galat_internal"
     assert NIK not in caplog.text
     assert "RuntimeError" in caplog.text
 
 
-def test_findings_json_not_in_audit(db, store, engine, make_pdf):
+def test_findings_json_not_in_audit(db, store, make_pdf):
     doc = _doc(db, store, make_pdf(TEXT))
-    _run(db, store, engine, JobKind.DETEKSI, doc)
+    _run(db, store, JobKind.DETEKSI, doc)
     events = db.query(AuditEvent).all()
     assert [e.action for e in events] == ["deteksi_selesai"]
     for e in events:
@@ -164,15 +157,15 @@ def test_findings_json_not_in_audit(db, store, engine, make_pdf):
         assert "{" not in e.detail
 
 
-def test_run_pending_runs_all(db, store, engine, make_pdf):
+def test_run_pending_runs_all(db, store, make_pdf):
     doc = _doc(db, store, make_pdf(TEXT))
     enqueue(db, JobKind.DETEKSI, doc)
     db.commit()
     factory = lambda: _Ctx(db)
-    assert run_pending(factory, store, engine) == 1
+    assert run_pending(factory, store) == 1
     db.refresh(doc)
     assert doc.status == Status.MENUNGGU_CEK
-    assert run_pending(factory, store, engine) == 0
+    assert run_pending(factory, store) == 0
 
 
 class _Ctx:
@@ -186,7 +179,7 @@ class _Ctx:
         return False
 
 
-def test_worker_processes_job(tmp_path, store, engine, make_pdf, app_settings):
+def test_worker_processes_job(tmp_path, store, make_pdf, app_settings):
     import time
     from digitadlp.app.db import make_engine, make_session_factory
     from digitadlp.app.jobs import Worker
@@ -200,7 +193,7 @@ def test_worker_processes_job(tmp_path, store, engine, make_pdf, app_settings):
         enqueue(db, JobKind.DETEKSI, doc)
         db.commit()
         doc_id = doc.id
-    w = Worker(factory, store, engine, app_settings)
+    w = Worker(factory, store, app_settings)
     w.start()
     try:
         for _ in range(100):
@@ -232,10 +225,10 @@ def _bump_revision(db, doc_id):
         other.commit()
 
 
-def _approved_with_versions(db, store, engine, make_pdf):
+def _approved_with_versions(db, store, make_pdf):
     doc = _doc(db, store, make_pdf(TEXT))
-    _run(db, store, engine, JobKind.DETEKSI, doc)
-    _run(db, store, engine, JobKind.VERSI, doc)
+    _run(db, store, JobKind.DETEKSI, doc)
+    _run(db, store, JobKind.VERSI, doc)
     return doc, {v: store.get(doc.id, f"{v}.pdf") for v in ("publik", "internal", "rahasia")}
 
 
@@ -244,8 +237,8 @@ def _sentinel_versions(store, doc):
         store.put(doc.id, f"{v}.pdf", b"NEWER-" + v.encode())
 
 
-def test_revision_bump_during_versi_leaves_versions_and_state(db, store, engine, make_pdf, monkeypatch):
-    doc, _ = _approved_with_versions(db, store, engine, make_pdf)
+def test_revision_bump_during_versi_leaves_versions_and_state(db, store, make_pdf, monkeypatch):
+    doc, _ = _approved_with_versions(db, store, make_pdf)
     _sentinel_versions(store, doc)  # stands in for versions of the newer revision
     real = _processing.redact_pdf
     calls = {"n": 0}
@@ -257,15 +250,15 @@ def test_revision_bump_during_versi_leaves_versions_and_state(db, store, engine,
         return real(*a, **k)
 
     monkeypatch.setattr(_processing, "redact_pdf", bumping)
-    job = _run(db, store, engine, JobKind.VERSI, doc)
+    job = _run(db, store, JobKind.VERSI, doc)
     assert job.state == JobState.SELESAI
     assert doc.status == Status.MENUNGGU_CEK  # not overwritten to disetujui
     for v in ("publik", "internal", "rahasia"):
         assert store.get(doc.id, f"{v}.pdf") == b"NEWER-" + v.encode()
 
 
-def test_stale_failing_versi_keeps_newer_versions(db, store, engine, make_pdf, monkeypatch):
-    doc, _ = _approved_with_versions(db, store, engine, make_pdf)
+def test_stale_failing_versi_keeps_newer_versions(db, store, make_pdf, monkeypatch):
+    doc, _ = _approved_with_versions(db, store, make_pdf)
     _sentinel_versions(store, doc)
 
     def failing(*a, **k):
@@ -273,14 +266,14 @@ def test_stale_failing_versi_keeps_newer_versions(db, store, engine, make_pdf, m
         raise _DocumentError("rusak")
 
     monkeypatch.setattr(_processing, "redact_pdf", failing)
-    job = _run(db, store, engine, JobKind.VERSI, doc)
+    job = _run(db, store, JobKind.VERSI, doc)
     assert job.state == JobState.GAGAL
     assert doc.status == Status.MENUNGGU_CEK
     for v in ("publik", "internal", "rahasia"):
         assert store.get(doc.id, f"{v}.pdf") == b"NEWER-" + v.encode()
 
 
-def test_revision_bump_during_deteksi_no_write(db, store, engine, make_pdf, monkeypatch):
+def test_revision_bump_during_deteksi_no_write(db, store, make_pdf, monkeypatch):
     doc = _doc(db, store, make_pdf(TEXT))
     real = _processing.extract_pdf_text
 
@@ -289,13 +282,13 @@ def test_revision_bump_during_deteksi_no_write(db, store, engine, make_pdf, monk
         return real(*a, **k)
 
     monkeypatch.setattr(_processing, "extract_pdf_text", bumping)
-    job = _run(db, store, engine, JobKind.DETEKSI, doc)
+    job = _run(db, store, JobKind.DETEKSI, doc)
     assert job.state == JobState.SELESAI
     assert doc.findings_json == "[]" and doc.label is None
     assert db.query(AuditEvent).count() == 0
 
 
-def test_reclaimed_job_original_runner_cannot_commit(db, store, engine, make_pdf):
+def test_reclaimed_job_original_runner_cannot_commit(db, store, make_pdf):
     doc = _doc(db, store, make_pdf(TEXT))
     enqueue(db, JobKind.DETEKSI, doc)
     db.commit()
@@ -311,7 +304,7 @@ def test_reclaimed_job_original_runner_cannot_commit(db, store, engine, make_pdf
     db.expunge_all()
     stale = Job(id=job_id, kind=JobKind.DETEKSI, document_id=doc_id,
                 revision=0, state=JobState.BERJALAN, claim_token=old_token)
-    run_job(db, store, engine, stale)
+    run_job(db, store, stale)
     d = db.get(Document, doc_id)
     j = db.get(Job, job_id)
     assert d.status == Status.DIPROSES and d.findings_json == "[]"
@@ -319,8 +312,8 @@ def test_reclaimed_job_original_runner_cannot_commit(db, store, engine, make_pdf
     assert db.query(AuditEvent).count() == 0
 
 
-def test_lost_claim_failure_has_no_side_effects(db, store, engine, make_pdf, monkeypatch):
-    doc, _ = _approved_with_versions(db, store, engine, make_pdf)
+def test_lost_claim_failure_has_no_side_effects(db, store, make_pdf, monkeypatch):
+    doc, _ = _approved_with_versions(db, store, make_pdf)
     enqueue(db, JobKind.VERSI, doc)
     db.commit()
     job = claim(db, 30)
@@ -332,7 +325,7 @@ def test_lost_claim_failure_has_no_side_effects(db, store, engine, make_pdf, mon
         raise _DocumentError("rusak")
 
     monkeypatch.setattr(_processing, "redact_pdf", steal_and_fail)
-    run_job(db, store, engine, job)
+    run_job(db, store, job)
     db.refresh(doc)
     db.refresh(job)
     assert job.state == JobState.BERJALAN
@@ -340,14 +333,14 @@ def test_lost_claim_failure_has_no_side_effects(db, store, engine, make_pdf, mon
     assert store.exists(doc.id, "publik.pdf")
 
 
-def test_touch_called_during_job(db, store, engine, make_pdf):
+def test_touch_called_during_job(db, store, make_pdf):
     doc = _doc(db, store, make_pdf(TEXT))
-    _run(db, store, engine, JobKind.DETEKSI, doc)
+    _run(db, store, JobKind.DETEKSI, doc)
     enqueue(db, JobKind.VERSI, doc)
     db.commit()
     job = claim(db, 30)
     n = {"c": 0}
-    run_job(db, store, engine, job, touch=lambda: n.__setitem__("c", n["c"] + 1))
+    run_job(db, store, job, touch=lambda: n.__setitem__("c", n["c"] + 1))
     assert n["c"] >= 3
 
 
@@ -365,56 +358,42 @@ def test_heartbeat_refreshes_claimed_at(db, store, make_pdf):
     assert job.claimed_at > old + timedelta(minutes=19)
 
 
-def test_pdf_extras_stored_with_null_page(db, store, engine, make_pdf):
+def test_pdf_extras_stored_with_null_page(db, store, make_pdf):
     doc = _doc(db, store, make_pdf("Surat biasa", metadata={"author": NIK, "title": "x"}))
-    _run(db, store, engine, JobKind.DETEKSI, doc)
+    _run(db, store, JobKind.DETEKSI, doc)
     entries = [f for p in json.loads(doc.findings_json) for f in p]
     assert any(f["page"] is None and f["text"] == NIK for f in entries)
 
 
-def test_deteksi_keeps_reviewer_label(db, store, engine, make_pdf):
+def test_deteksi_keeps_reviewer_label(db, store, make_pdf):
     doc = _doc(db, store, make_pdf(TEXT))
     doc.label = "publik"
     doc.label_set_by_reviewer = True
     db.commit()
-    _run(db, store, engine, JobKind.DETEKSI, doc)
+    _run(db, store, JobKind.DETEKSI, doc)
     assert doc.suggested_label == "rahasia" and doc.label == "publik"
 
 
-def test_engine_directory_swap_is_atomic_and_read_once(db, store, make_pdf, monkeypatch):
-    from digitadlp.app import processing
-    from digitadlp.detect.employees import EmployeeDirectory
-    eng = processing.Engine(FakeNer({}), EmployeeDirectory(set()))
-    old = eng.directory
-    new = EmployeeDirectory.from_names(["Siti Rahmawati"])
-    eng.set_directory(new)
-    assert eng.directory is new and eng.directory is not old
-    seen = []
-    real = processing.detect
-
-    def spy(text, ner, directory):
-        seen.append(directory)
-        eng.set_directory(EmployeeDirectory(set()))  # diganti di tengah job
-        return real(text, ner, directory)
-
-    monkeypatch.setattr(processing, "detect", spy)
-    doc = _doc(db, store, make_pdf(TEXT))
-    processing.compute_deteksi(db, store, eng, doc)
-    assert seen and all(d is new for d in seen)
-
-
-def test_render_versi_uses_store_scratch(db, store, engine, make_pdf, monkeypatch):
+def test_render_versi_uses_store_scratch(db, store, make_pdf, monkeypatch):
     import digitadlp.app.jobs as _jobs
     doc = _doc(db, store, make_pdf(TEXT))
-    _run(db, store, engine, JobKind.DETEKSI, doc)
+    _run(db, store, JobKind.DETEKSI, doc)
     seen = []
     orig = _jobs.render_versi
 
-    def spy(db_, store_, engine_, doc_, tmpdir, touch=None):
+    def spy(db_, store_, doc_, tmpdir, touch=None):
         seen.append(tmpdir)
         assert tmpdir.parent == store.root / ".tmp"
-        return orig(db_, store_, engine_, doc_, tmpdir, touch)
+        return orig(db_, store_, doc_, tmpdir, touch)
 
     monkeypatch.setattr(_jobs, "render_versi", spy)
-    job = _run(db, store, engine, JobKind.VERSI, doc)
+    job = _run(db, store, JobKind.VERSI, doc)
     assert job.state == JobState.SELESAI and seen and not seen[0].exists()
+
+
+def test_names_not_auto_detected(db, store, make_pdf):
+    doc = _doc(db, store, make_pdf(TEXT))
+    _run(db, store, JobKind.DETEKSI, doc)
+    found = [f for p in json.loads(doc.findings_json) for f in p]
+    assert not [f for f in found if f["kind"].startswith("NAME_")]
+    assert not any("Siti Rahmawati" in f["text"] for f in found)

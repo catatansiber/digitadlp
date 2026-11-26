@@ -49,7 +49,7 @@ test("unauthenticated visit redirects to login", async () => {
   expect(await screen.findByLabelText("Nama pengguna")).toBeInTheDocument();
 });
 
-test("pengunggah does not see Admin tab", async () => {
+test("pengguna does not see Admin tab", async () => {
   server.use(meAs(uploader));
   renderApp("/");
   await screen.findByRole("heading", { name: "Beranda" });
@@ -63,7 +63,7 @@ test("admin sees Admin tab", async () => {
   expect(await screen.findByRole("link", { name: "Admin" })).toBeInTheDocument();
 });
 
-test("RequireRole blocks pengunggah from admin pages", async () => {
+test("RequireRole blocks pengguna from admin pages", async () => {
   server.use(meAs(uploader));
   renderApp("/admin/pengguna");
   expect(await screen.findByText("Anda tidak punya akses ke halaman ini.")).toBeInTheDocument();
@@ -118,4 +118,11 @@ test("401 return path keeps hash", async () => {
   expect(await screen.findByTestId("loc")).toHaveTextContent(
     "/masuk?kembali=" + encodeURIComponent("/dokumen/7?a=1#h"),
   );
+});
+
+test("admin nav has no Pegawai", async () => {
+  server.use(meAs(admin), http.get("/api/admin/users", () => HttpResponse.json([])), http.get("/api/admin/units", () => HttpResponse.json([])));
+  renderApp("/admin/pengguna");
+  await screen.findByRole("navigation", { name: "Menu admin" });
+  expect(screen.queryByRole("link", { name: "Pegawai" })).toBeNull();
 });

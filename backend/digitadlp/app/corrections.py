@@ -66,9 +66,11 @@ def corrected_detect_fn(
     def fn(text: str) -> list[Finding]:
         out = [f for f in detect_fn(text) if _norm(f.text) not in ignores]
         for c in adds:
-            if not c.text:
+            tokens = c.text.split()
+            if not tokens:
                 continue
-            for m in re.finditer(re.escape(c.text), text, re.IGNORECASE):
+            pattern = r"\s+".join(re.escape(t) for t in tokens)
+            for m in re.finditer(pattern, text, re.IGNORECASE):
                 out.append(Finding(Kind(c.kind), m.start(), m.end(), m.group(), "manual"))
         return _merge(out, text)
 

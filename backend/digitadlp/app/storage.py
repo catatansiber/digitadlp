@@ -16,7 +16,7 @@ _DOC_ID = re.compile(r"[0-9a-f]{32}")
 _NAME = re.compile(r"(source|publik|internal|rahasia)\.(pdf|docx)")
 _VERSIONS = ("publik", "internal", "rahasia")
 _EXTS = ("pdf", "docx")
-_BLOBS = frozenset({"employees.xlsx"})
+_LEGACY_BLOBS = ("employees.xlsx",)
 _CONFIG_DIR = "_config"
 
 
@@ -43,25 +43,19 @@ class FileStore:
         self.root.mkdir(parents=True, exist_ok=True)
         # Sisa file terdekripsi dari proses yang crash tidak boleh tertinggal.
         self.purge_tmp(older_than_seconds=0)
+        self.delete_legacy_blobs()
+
+    def delete_legacy_blobs(self) -> None:
+        """Hapus file konfigurasi lama (mis. daftar pegawai terenkripsi) bila ada."""
+        for name in _LEGACY_BLOBS:
+            try:
+                (self.root / _CONFIG_DIR / (name + ".enc")).unlink()
+            except FileNotFoundError:
+                pass
 
     def _path(self, doc_id: str, name: str) -> Path:
         _check(doc_id, name)
         return self.root / doc_id / (name + ".enc")
-
-    def _blob_path(self, name: str) -> Path:
-        if not isinstance(name, str) or name not in _BLOBS:
-            raise ValueError("Nama file konfigurasi tidak valid.")
-        return self.root / _CONFIG_DIR / (name + ".enc")
-
-    def put_blob(self, name: str, data: bytes) -> None:
-        self._write(self._blob_path(name), data)
-
-    def get_blob(self, name: str) -> bytes | None:
-        """None bila belum ada."""
-        path = self._blob_path(name)
-        if not path.is_file():
-            return None
-        return self._decrypt(path)
 
     def put(self, doc_id: str, name: str, data: bytes) -> None:
         self._write(self._path(doc_id, name), data)

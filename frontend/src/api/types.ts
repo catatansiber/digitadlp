@@ -1,4 +1,4 @@
-export type Role = "pengunggah" | "pemeriksa" | "admin";
+export type Role = "pengguna" | "admin";
 
 /** Bentuk respons GET /api/auth/me dan POST /api/auth/login. */
 export type Me = {

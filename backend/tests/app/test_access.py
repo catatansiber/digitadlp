@@ -13,39 +13,37 @@ ALL = ("publik", "internal", "rahasia")
 
 def _prep(client_as, work, make_pdf, wapp, status):
     up, doc_id = _ready(client_as, work, make_pdf)
-    rev = client_as("pemeriksa", unit="Unit B")
-    rev.post(f"/api/documents/{doc_id}/approve")
+    assert up.post(f"/api/documents/{doc_id}/approve").status_code == 200
     work()
     if status == "dirilis":
-        assert rev.post(f"/api/documents/{doc_id}/release").status_code == 200
+        assert up.post(f"/api/documents/{doc_id}/release").status_code == 200
+    rev = client_as("pengguna", unit="Unit B")  # pengguna unit lain
     return up, rev, doc_id
 
 
-# (actor, expected per version) for each status; unit of doc = Unit A, owner = pengunggah
+# (actor, expected per version) for each status; unit of doc = Unit A, owner = pengguna
 def _expect(actor, status, version):
     rel = status == "dirilis"
     same = actor in ("owner", "unit_mate", "admin_same")
-    rev = actor == "pemeriksa"
     if version == "publik":
-        return rel or (same or rev)
+        return rel or same
     if version == "internal":
         return True
-    return same or rev
+    return same
 
 
 @pytest.mark.parametrize("status", ["disetujui", "dirilis"])
 @pytest.mark.parametrize("version", ALL)
 @pytest.mark.parametrize(
-    "actor", ["owner", "unit_mate", "admin_same", "other_up", "admin_other", "pemeriksa"])
+    "actor", ["owner", "unit_mate", "admin_same", "other_up", "admin_other"])
 def test_matrix(client_as, work, make_pdf, wapp, actor, version, status):
     up, rev, doc_id = _prep(client_as, work, make_pdf, wapp, status)
     c = {
         "owner": up,
-        "unit_mate": lambda: client_as("pengunggah", unit="Unit A"),
+        "unit_mate": lambda: client_as("pengguna", unit="Unit A"),
         "admin_same": lambda: client_as("admin", unit="Unit A"),
-        "other_up": lambda: client_as("pengunggah", unit="Unit C"),
+        "other_up": lambda: client_as("pengguna", unit="Unit C"),
         "admin_other": lambda: client_as("admin", unit="Unit C"),
-        "pemeriksa": rev,
     }[actor]
     c = c() if callable(c) and not hasattr(c, "get") else c
     r = c.get(f"/api/documents/{doc_id}/versions/{version}")
@@ -62,14 +60,14 @@ def test_not_ready_status_denied(client_as, work, make_pdf, wapp):
 
 def test_other_unit_disetujui_is_403(client_as, work, make_pdf, wapp):
     _up, _rev, doc_id = _prep(client_as, work, make_pdf, wapp, "disetujui")
-    other = client_as("pengunggah", unit="Unit C")
+    other = client_as("pengguna", unit="Unit C")
     assert other.get(f"/api/documents/{doc_id}/versions/publik").status_code == 403
     assert other.get(f"/api/documents/{doc_id}/versions/internal").status_code == 200
 
 
 def test_non_viewer_404_and_audited(client_as, work, make_pdf, wapp):
     up, doc_id = _ready(client_as, work, make_pdf)  # menunggu_cek
-    other = client_as("pengunggah", unit="Unit C")
+    other = client_as("pengguna", unit="Unit C")
     assert other.get(f"/api/documents/{doc_id}/versions/publik").status_code == 404
     with wapp.state.session_factory() as db:
         ev = db.scalars(select(AuditEvent).where(AuditEvent.action == "akses_ditolak")).all()
@@ -87,7 +85,7 @@ def test_inactive_user_401(client_as, work, make_pdf, wapp):
 
 def test_denied_is_audited(client_as, work, make_pdf, wapp):
     _up, _rev, doc_id = _prep(client_as, work, make_pdf, wapp, "dirilis")
-    other = client_as("pengunggah", unit="Unit C")
+    other = client_as("pengguna", unit="Unit C")
     r = other.get(f"/api/documents/{doc_id}/versions/rahasia")
     assert r.status_code == 403 and r.json()["detail"] == "Anda tidak punya akses ke versi ini."
     with wapp.state.session_factory() as db:
@@ -130,28 +128,29 @@ def test_list_filters(client_as, work, make_pdf, wapp):
     r = up.get("/api/documents").json()
     assert [d["id"] for d in r] == [doc_id]
     d = r[0]
-    assert d["owner"] == "Pengunggah1" and d["unit"] == "Unit A" and "findings" not in d
+    assert d["owner"] == "Pengguna1" and d["unit"] == "Unit A" and "findings" not in d
     assert up.get("/api/documents?status=dirilis").json()
     assert up.get("/api/documents?status=diproses").json() == []
     bad = up.get("/api/documents?status=ngawur")
     assert bad.status_code == 422
-    assert rev.get("/api/documents").json()
-    assert rev.get("/api/documents?mine=true").json() == []
-    mate = client_as("pengunggah", unit="Unit A")
+    assert rev.get("/api/documents").json() == []  # unit lain
+    assert up.get("/api/documents?mine=true").json()
+    mate = client_as("pengguna", unit="Unit A")
     assert len(mate.get("/api/documents").json()) == 1
     assert mate.get("/api/documents?mine=true").json() == []
-    assert client_as("pengunggah", unit="Unit C").get("/api/documents").json() == []
-    assert client_as("admin", unit="Unit C").get("/api/documents").json() == []
+    assert client_as("pengguna", unit="Unit C").get("/api/documents").json() == []
+    assert client_as("admin", unit="Unit C").get("/api/documents").json()  # admin lihat semua
     assert client_as("admin", unit="Unit A").get("/api/documents").json()
 
 
 @pytest.mark.parametrize("role,same,version,status,exp", [
     (Role.ADMIN, False, "rahasia", Status.DIRILIS, False),
     (Role.ADMIN, True, "rahasia", Status.DISETUJUI, True),
-    (Role.PEMERIKSA, False, "rahasia", Status.DISETUJUI, True),
-    (Role.PENGUNGGAH, False, "publik", Status.DISETUJUI, False),
-    (Role.PENGUNGGAH, False, "internal", Status.DIRILIS, True),
-    (Role.PENGUNGGAH, True, "internal", Status.MENUNGGU_CEK, False),
+    (Role.PENGGUNA, False, "rahasia", Status.DISETUJUI, False),
+    (Role.PENGGUNA, True, "publik", Status.DISETUJUI, True),
+    (Role.PENGGUNA, False, "publik", Status.DISETUJUI, False),
+    (Role.PENGGUNA, False, "internal", Status.DIRILIS, True),
+    (Role.PENGGUNA, True, "internal", Status.MENUNGGU_CEK, False),
 ])
 def test_can_download_unit(role, same, version, status, exp):
     from types import SimpleNamespace as N

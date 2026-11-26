@@ -8,10 +8,7 @@ from sqlalchemy.pool import StaticPool
 from digitadlp.app.config import Settings
 from digitadlp.app.main import create_app
 from digitadlp.app.models import Base, Role, Unit, User
-from digitadlp.app.processing import Engine
 from digitadlp.app.security import hash_password
-from digitadlp.detect.employees import EmployeeDirectory
-from digitadlp.detect.ner import FakeNer
 
 
 @pytest.fixture
@@ -39,7 +36,7 @@ def app_settings(tmp_path):
 
 @pytest.fixture
 def app(app_settings):
-    app = create_app(app_settings, Engine(FakeNer({}), EmployeeDirectory(set())))
+    app = create_app(app_settings)
     Base.metadata.create_all(app.state.db_engine)
     yield app
     app.state.db_engine.dispose()
@@ -57,7 +54,7 @@ def app_db(app):
         yield session
 
 
-def make_user(db, username, role=Role.PENGUNGGAH, unit_name="Unit A", password="rahasia123"):
+def make_user(db, username, role=Role.PENGGUNA, unit_name="Unit A", password="rahasia123"):
     unit = db.scalar(select(Unit).where(Unit.name == unit_name))
     if unit is None:
         unit = Unit(name=unit_name)

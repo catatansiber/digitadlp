@@ -13,9 +13,18 @@ import { STRONG_KINDS } from "../lib/highlight";
 import { KIND_TEXT, LABEL_TEXT, type LabelValue } from "../lib/labels";
 import { validateFile } from "./Upload";
 
-export const MAX_REASON = 200; // sama dengan backend workflow.MAX_REASON
-export const MSG_SELF =
-  "Pemeriksa tidak boleh menyetujui dokumen yang ia unggah sendiri.";
+export const MSG_REUPLOAD =
+  "Unggah ulang akan menghapus temuan dan koreksi dokumen ini. Lanjutkan?";
+export const MSG_NAME_HELP =
+  "Nama tidak dideteksi otomatis. Tandai nama orang yang perlu disensor; semua kemunculan yang sama ikut tersensor.";
+
+/** Jenis yang bisa dipilih pada "Tandai manual": nama orang dulu, tanpa NAME_EMPLOYEE (hanya data lama). */
+const MANUAL_KINDS = [
+  "NAME_CITIZEN",
+  ...Object.keys(KIND_TEXT).filter(
+    (k) => k !== "NAME_CITIZEN" && k !== "NAME_EMPLOYEE",
+  ),
+];
 
 type DocDetail = {
   id: string;
@@ -28,7 +37,6 @@ type DocDetail = {
   owner_name: string | null;
   unit_name: string | null;
   revision: number;
-  return_reason?: string | null;
   findings?: unknown[];
 };
 
@@ -73,7 +81,7 @@ export function Review() {
     text: string;
     page: string;
   } | null>(null);
-  const [reason, setReason] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
 
   const q = useQuery({
     queryKey: ["document", id],
@@ -101,7 +109,7 @@ export function Review() {
     onSuccess: (_r, a) => {
       setToast({ message: a.done, kind: "info" });
       setManual(null);
-      setReason(null);
+      setPendingFile(null);
       void qc.invalidateQueries({ queryKey: ["document", id] });
       void qc.invalidateQueries({ queryKey: ["documents"] });
     },
@@ -130,13 +138,14 @@ export function Review() {
     );
 
   const findings = flatten(doc.findings);
-  const isReviewer = user?.role === "pemeriksa";
-  const canAct = isReviewer && doc.status === "menunggu_cek";
+  const isOwner = !!user && doc.owner_id === user.id;
+  const canAct = isOwner && doc.status === "menunggu_cek";
   const canEdit =
-    isReviewer && (doc.status === "menunggu_cek" || doc.status === "disetujui");
+    isOwner && (doc.status === "menunggu_cek" || doc.status === "disetujui");
+  const canReupload =
+    isOwner && (doc.status === "menunggu_cek" || doc.status === "gagal");
   // Temuan DOCX disimpan server sebagai satu halaman (indeks 0); /text memecah per paragraf.
   const isDocx = doc.ext === "docx";
-  const self = doc.owner_id === user?.id;
   const pageCount =
     t.data?.pages.length ?? Math.max(1, (doc.findings ?? []).length);
 
@@ -145,17 +154,19 @@ export function Review() {
     setManual({ kind: "NAME_CITIZEN", text: sel, page: "1" });
   }
 
-  function onReupload(f: File) {
+  function pickReupload(f: File) {
     const bad = validateFile(f);
     if (bad) return setToast({ message: bad, kind: "error" });
+    setPendingFile(f);
+  }
+
+  function doReupload(f: File) {
     act.mutate({
       name: "reupload",
       run: () => uploadDocument(f, undefined, undefined, `${path}/reupload`),
       done: "Dokumen diunggah ulang.",
     });
   }
-
-  const reasonTooLong = (reason ?? "").length > MAX_REASON;
 
   return (
     <section className="page">
@@ -171,29 +182,40 @@ export function Review() {
         {doc.owner_name ?? "-"} · {doc.unit_name ?? "-"} · revisi {doc.revision}
       </p>
 
-      {doc.status === "dikembalikan" && (
-        <div className="notice error">
-          <b>Dikembalikan ke pengunggah.</b>{" "}
-          {doc.return_reason && <span>{doc.return_reason}</span>}
-          {self && (
-            <div className="row">
-              <label className="btn primary">
-                {pending("reupload") ? "Mengunggah…" : "Unggah ulang"}
-                <input
-                  type="file"
-                  accept=".pdf,.docx"
-                  aria-label="Unggah ulang"
-                  className="visually-hidden"
-                  disabled={busy}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    e.target.value = "";
-                    if (f) onReupload(f);
-                  }}
-                />
-              </label>
-            </div>
-          )}
+      {canReupload && (
+        <div className="row">
+          <label className="btn">
+            {pending("reupload") ? "Mengunggah…" : "Unggah ulang"}
+            <input
+              type="file"
+              accept=".pdf,.docx"
+              aria-label="Unggah ulang"
+              className="visually-hidden"
+              disabled={busy}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) pickReupload(f);
+              }}
+            />
+          </label>
+        </div>
+      )}
+      {pendingFile && (
+        <div role="dialog" aria-label="Unggah ulang" className="dialog">
+          <p>{MSG_REUPLOAD}</p>
+          <div className="row">
+            <Button
+              variant="primary"
+              disabled={busy}
+              onClick={() => doReupload(pendingFile)}
+            >
+              Lanjutkan
+            </Button>
+            <Button disabled={busy} onClick={() => setPendingFile(null)}>
+              Batal
+            </Button>
+          </div>
         </div>
       )}
       {doc.status === "membuat_versi" && (
@@ -307,6 +329,7 @@ export function Review() {
                       });
                     }}
                   >
+                    <p className="muted">{MSG_NAME_HELP}</p>
                     <label className="field">
                       Jenis
                       <select
@@ -315,9 +338,9 @@ export function Review() {
                           setManual({ ...manual, kind: e.target.value })
                         }
                       >
-                        {Object.entries(KIND_TEXT).map(([v, txt]) => (
+                        {MANUAL_KINDS.map((v) => (
                           <option key={v} value={v}>
-                            {txt}
+                            {KIND_TEXT[v]}
                           </option>
                         ))}
                       </select>
@@ -373,8 +396,7 @@ export function Review() {
                   <div className="row">
                     <Button
                       variant="primary"
-                      disabled={busy || self}
-                      title={self ? MSG_SELF : undefined}
+                      disabled={busy}
                       onClick={() =>
                         act.mutate({
                           name: "approve",
@@ -383,51 +405,8 @@ export function Review() {
                         })
                       }
                     >
-                      {pending("approve")
-                        ? "Memproses…"
-                        : "Setujui & buat versi"}
+                      {pending("approve") ? "Memproses…" : "Buat versi"}
                     </Button>
-                    <Button disabled={busy} onClick={() => setReason("")}>
-                      Kembalikan ke pengunggah
-                    </Button>
-                  </div>
-                )}
-                {canAct && self && <p className="muted">{MSG_SELF}</p>}
-
-                {reason !== null && (
-                  <div
-                    role="dialog"
-                    aria-label="Kembalikan ke pengunggah"
-                    className="dialog"
-                  >
-                    <label className="field">
-                      Alasan
-                      <textarea
-                        value={reason}
-                        rows={3}
-                        onChange={(e) => setReason(e.target.value)}
-                      />
-                    </label>
-                    <span className={reasonTooLong ? "notice error" : "muted"}>
-                      {reason.length}/{MAX_REASON} (maksimal {MAX_REASON}{" "}
-                      karakter)
-                    </span>
-                    <div className="row">
-                      <Button
-                        variant="danger"
-                        disabled={busy || !reason.trim() || reasonTooLong}
-                        onClick={() =>
-                          act.mutate({
-                            name: "return",
-                            run: post("return", { reason }),
-                            done: "Dokumen dikembalikan",
-                          })
-                        }
-                      >
-                        {pending("return") ? "Mengirim…" : "Kirim"}
-                      </Button>
-                      <Button onClick={() => setReason(null)}>Batal</Button>
-                    </div>
                   </div>
                 )}
               </>

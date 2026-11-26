@@ -1,4 +1,6 @@
-"""Alur kerja dokumen: upload, label, koreksi, persetujuan, rilis."""
+"""Alur kerja dokumen: upload, label, koreksi, persetujuan, rilis.
+
+Semua tindakan atas dokumen hanya oleh pemiliknya; rilis juga boleh oleh Admin."""
 from __future__ import annotations
 
 import io
@@ -12,7 +14,6 @@ from sqlalchemy.orm import Session
 
 from ..models import Finding, Kind, Label
 from ..policy import suggest_label
-from ..detect.patterns import find_patterns
 from .audit import record
 from .corrections import _norm
 from .jobs import enqueue
@@ -27,7 +28,7 @@ EXTS = ("pdf", "docx")
 MAX_TEXT = 200
 
 MSG_FORBIDDEN = "Anda tidak punya akses untuk tindakan ini."
-MSG_SELF = "Pemeriksa tidak boleh menyetujui dokumen yang ia unggah sendiri."
+MSG_OWNER = "Hanya pemilik dokumen yang bisa melakukan tindakan ini."
 MSG_EXT = "Format file tidak didukung. Gunakan PDF atau DOCX."
 MSG_SIZE = "Ukuran file melebihi batas 50 MB."
 MSG_EMPTY = "File kosong."
@@ -44,6 +45,11 @@ class WorkflowError(Exception):
 def _role(user: User, *roles: Role) -> None:
     if user.role not in roles:
         raise WorkflowError(403, MSG_FORBIDDEN)
+
+
+def _owner(user: User, doc: Document) -> None:
+    if doc.owner_id != user.id:
+        raise WorkflowError(403, MSG_OWNER)
 
 
 def _state(doc: Document, *states: Status) -> None:
@@ -89,7 +95,7 @@ def _readable(ext: str, data: bytes) -> bool:
 
 
 def upload(db: Session, store: FileStore, user: User, filename: str, data: bytes) -> Document:
-    _role(user, Role.PENGUNGGAH, Role.PEMERIKSA)
+    _role(user, Role.PENGGUNA)
     ext = _ext_of(filename, data)
     title = PurePath(filename).name[:300]
     doc = Document(title=title, ext=ext, owner_id=user.id, unit_id=user.unit_id,
@@ -104,7 +110,7 @@ def upload(db: Session, store: FileStore, user: User, filename: str, data: bytes
 
 
 def set_label(db: Session, user: User, doc: Document, label: str) -> Document:
-    _role(user, Role.PEMERIKSA)
+    _owner(user, doc)
     _state(doc, Status.MENUNGGU_CEK)
     try:
         label = Label(label).value
@@ -143,7 +149,7 @@ def add_correction(db: Session, user: User, doc: Document, op: str, kind: str,
                    text: str, page: int | None, *, store: FileStore | None = None
                    ) -> Correction:
     """`store` (opsional) dipakai untuk menghapus versi yang sudah dibuat."""
-    _role(user, Role.PEMERIKSA)
+    _owner(user, doc)
     _state(doc, Status.MENUNGGU_CEK, Status.DISETUJUI)
     try:
         op = CorrectionOp(op)
@@ -181,10 +187,8 @@ def _invalidate(doc: Document) -> None:
 
 
 def approve(db: Session, user: User, doc: Document) -> Document:
-    _role(user, Role.PEMERIKSA)
+    _owner(user, doc)
     _state(doc, Status.MENUNGGU_CEK)
-    if doc.owner_id == user.id:
-        raise WorkflowError(403, MSG_SELF)
     doc.reviewer_id = user.id
     doc.approved_at = utcnow()
     doc.status = Status.MEMBUAT_VERSI
@@ -194,29 +198,10 @@ def approve(db: Session, user: User, doc: Document) -> Document:
     return doc
 
 
-MAX_REASON = 200
-
-
-def return_to_owner(db: Session, user: User, doc: Document, reason: str) -> Document:
-    _role(user, Role.PEMERIKSA)
-    _state(doc, Status.MENUNGGU_CEK)
-    reason = reason or ""
-    if len(reason) > MAX_REASON:
-        raise WorkflowError(422, "Alasan terlalu panjang (maksimal 200 karakter).")
-    if find_patterns(reason):  # alasan disimpan (hanya terlihat oleh pemeriksa/unit pemilik), jadi ditolak bila memuat data pribadi
-        raise WorkflowError(422, "Rincian audit tidak boleh memuat data pribadi.")
-    doc.status = Status.DIKEMBALIKAN
-    doc.return_reason = reason or None
-    _record(db, user, "kembalikan", doc, detail=f"alasan_len={len(reason or '')}")
-    db.commit()
-    return doc
-
-
 def reupload(db: Session, store: FileStore, user: User, doc: Document,
              filename: str, data: bytes) -> Document:
-    if doc.owner_id != user.id:
-        raise WorkflowError(403, MSG_FORBIDDEN)
-    _state(doc, Status.DIKEMBALIKAN, Status.GAGAL)
+    _owner(user, doc)
+    _state(doc, Status.MENUNGGU_CEK, Status.GAGAL)
     ext = _ext_of(filename, data)
     store.delete_versions(doc.id)
     store.put(doc.id, f"source.{ext}", data)
@@ -237,7 +222,8 @@ def reupload(db: Session, store: FileStore, user: User, doc: Document,
 
 
 def release(db: Session, user: User, doc: Document) -> Document:
-    _role(user, Role.PEMERIKSA, Role.ADMIN)
+    if user.role != Role.ADMIN:  # Admin: cadangan bila pemilik tidak aktif
+        _owner(user, doc)
     _state(doc, Status.DISETUJUI)
     doc.status = Status.DIRILIS
     doc.released_at = utcnow()

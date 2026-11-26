@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,8 +10,6 @@ from types import SimpleNamespace
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..detect.employees import EmployeeDirectory
-from ..detect.ner import NerDetector
 from ..detect.pipeline import detect
 from ..models import Finding, Kind, Label, Version
 from ..policy import suggest_label
@@ -24,26 +21,6 @@ from .models import Correction, Document, LabelRule, Status
 from .storage import FileStore
 
 VERSIONS = ("publik", "internal", "rahasia")
-
-
-class Engine:
-    """NER + direktori pegawai. Direktori bisa diganti saat berjalan (impor
-    admin); penggantian memakai kunci dan referensi objek baru yang tidak
-    diubah lagi, jadi job cukup membaca `directory` sekali di awal."""
-
-    def __init__(self, ner: NerDetector, directory: EmployeeDirectory):
-        self.ner = ner
-        self._directory = directory
-        self._lock = threading.Lock()
-
-    @property
-    def directory(self) -> EmployeeDirectory:
-        with self._lock:
-            return self._directory
-
-    def set_directory(self, directory: EmployeeDirectory) -> None:
-        with self._lock:
-            self._directory = directory
 
 
 Touch = Callable[[], None]
@@ -79,13 +56,9 @@ def label_rules(db: Session) -> dict[Kind, Label]:
     return rules
 
 
-def _analyze(src: Path, ext: str, engine: Engine, corrections, directory=None):
+def _analyze(src: Path, ext: str, corrections):
     """Temuan (sudah dikoreksi) per halaman, temuan ekstra PDF, dan detect_fn."""
-    directory = directory if directory is not None else engine.directory
-
-    def base(text: str) -> list[Finding]:
-        return detect(text, engine.ner, directory)
-
+    base = detect
     fn = corrected_detect_fn(base, corrections)
     if ext == "pdf":
         raw = [base(t) for t in extract_pdf_text(src)]
@@ -120,14 +93,14 @@ class DeteksiResult:
 
 
 def compute_deteksi(
-    db: Session, store: FileStore, engine: Engine, doc: Document, touch: Touch = _noop
+    db: Session, store: FileStore, doc: Document, touch: Touch = _noop
 ) -> DeteksiResult:
     """Hitung temuan tanpa menulis apa pun ke DB."""
     ext, doc_id = _ext(doc), doc.id
     corrections = load_corrections(db, doc_id)
     rules = label_rules(db)
     with store.decrypted(doc_id, f"source.{ext}") as src:
-        pages, extras, _ = _analyze(src, ext, engine, corrections)
+        pages, extras, _ = _analyze(src, ext, corrections)
     touch()
     label = suggest_label([f for p in pages for f in p] + extras, rules)
     return DeteksiResult(serialize(pages, extras), label)
@@ -143,22 +116,19 @@ def apply_deteksi(db: Session, doc: Document, result: DeteksiResult) -> None:
 
 
 def render_versi(
-    db: Session, store: FileStore, engine: Engine, doc: Document, tmpdir: Path,
+    db: Session, store: FileStore, doc: Document, tmpdir: Path,
     touch: Touch = _noop,
 ) -> dict[str, Path]:
     """Buat ketiga versi ke tmpdir (tidak menyentuh store atau DB)."""
     ext, doc_id = _ext(doc), doc.id
     corrections = load_corrections(db, doc_id)
-    directory = engine.directory  # sekali per job
     out: dict[str, Path] = {}
     with store.decrypted(doc_id, f"source.{ext}") as src:
         # Selalu hitung ulang dari sumber; findings_json tidak dipercaya.
         if ext == "pdf":
-            pages, _, fn = _analyze(src, ext, engine, corrections, directory)
+            pages, _, fn = _analyze(src, ext, corrections)
         else:
-            fn = corrected_detect_fn(
-                lambda t: detect(t, engine.ner, directory), corrections
-            )
+            fn = corrected_detect_fn(detect, corrections)
         touch()
         for v in VERSIONS:
             dst = tmpdir / f"{v}.{ext}"

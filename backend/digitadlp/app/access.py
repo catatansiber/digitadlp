@@ -7,12 +7,13 @@ _READY = (Status.DISETUJUI, Status.DIRILIS)
 
 
 def can_view(user: User, doc: Document) -> bool:
-    return (user.role == Role.PEMERIKSA or doc.owner_id == user.id
-            or doc.unit_id == user.unit_id)
+    # Admin boleh melihat metadata semua dokumen (untuk rilis cadangan), bukan temuan/teks.
+    return (doc.owner_id == user.id or doc.unit_id == user.unit_id
+            or user.role == Role.ADMIN)
 
 
 def can_see_rahasia(user: User, doc: Document) -> bool:
-    return user.role == Role.PEMERIKSA or doc.unit_id == user.unit_id
+    return doc.unit_id == user.unit_id
 
 
 def can_download(user: User, doc: Document, version: str) -> bool:
@@ -20,8 +21,7 @@ def can_download(user: User, doc: Document, version: str) -> bool:
         if doc.status == Status.DIRILIS:
             return True
         return doc.status == Status.DISETUJUI and (
-            doc.owner_id == user.id or user.role == Role.PEMERIKSA
-            or doc.unit_id == user.unit_id)
+            doc.unit_id == user.unit_id or doc.owner_id == user.id)
     if doc.status not in _READY:
         return False
     if version == "internal":

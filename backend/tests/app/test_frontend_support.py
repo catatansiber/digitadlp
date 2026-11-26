@@ -7,9 +7,6 @@ from sqlalchemy import select
 from digitadlp.app.jobs import run_pending
 from digitadlp.app.main import create_app
 from digitadlp.app.models import AuditEvent, Base, Role
-from digitadlp.app.processing import Engine
-from digitadlp.detect.employees import EmployeeDirectory
-from digitadlp.detect.ner import FakeNer
 
 from .conftest import make_user
 
@@ -19,7 +16,7 @@ INDEX = "<!doctype html><title>DigitaDLP</title><div id=root></div>"
 
 
 def _mk(settings):
-    app = create_app(settings, Engine(FakeNer({}), EmployeeDirectory(set())))
+    app = create_app(settings)
     Base.metadata.create_all(app.state.db_engine)
     return app
 
@@ -63,11 +60,11 @@ def mk_client(app, app_db):
 
 @pytest.fixture
 def ready(mk_client, app, make_pdf):
-    up = mk_client("pengunggah")
+    up = mk_client("pengguna")
     r = up.post("/api/documents", files={"file": ("s.pdf", make_pdf(TEXT).read_bytes(),
                                                   "application/pdf")})
     assert r.status_code == 201, r.text
-    run_pending(app.state.session_factory, app.state.store, app.state.engine)
+    run_pending(app.state.session_factory, app.state.store)
     return up, r.json()["id"]
 
 
@@ -116,20 +113,20 @@ def test_security_headers(spa, client):
 
 def test_text_endpoint_access(ready, mk_client):
     up, doc_id = ready
-    rev = mk_client("pemeriksa", unit="Unit B")
+    rev = mk_client("pengguna", unit="Unit A")
     r = rev.get(f"/api/documents/{doc_id}/text")
     assert r.status_code == 200
     assert r.headers["cache-control"] == "no-store"
     pages = r.json()["pages"]
     assert len(pages) == 1 and NIK in pages[0]
     assert up.get(f"/api/documents/{doc_id}/text").status_code == 200
-    other = mk_client("pengunggah", unit="Unit C")
+    other = mk_client("pengguna", unit="Unit C")
     assert other.get(f"/api/documents/{doc_id}/text").status_code == 404
     assert other.get("/api/documents/xyz/text").status_code == 404
 
 
 def test_text_endpoint_docx(mk_client, app, make_docx):
-    up = mk_client("pengunggah")
+    up = mk_client("pengguna")
     p = make_docx()
     r = up.post("/api/documents", files={"file": ("a.docx", p.read_bytes(), "application/octet-stream")})
     assert r.status_code == 201, r.text
@@ -147,32 +144,32 @@ def test_text_endpoint_extraction_error_422(ready, app):
 
 def test_text_endpoint_audited(ready, mk_client, app_db):
     up, doc_id = ready
-    rev = mk_client("pemeriksa", unit="Unit B")
+    rev = mk_client("pengguna", unit="Unit A")
     assert rev.get(f"/api/documents/{doc_id}/text").status_code == 200
     ev = app_db.scalars(select(AuditEvent).where(
         AuditEvent.document_id == doc_id, AuditEvent.action == "lihat_teks")).all()
     assert [e.detail for e in ev] == [""]
 
 
-def test_return_reason_visible_to_owner_unit_only(ready, mk_client):
+def test_legacy_return_reason_visible_to_owner_unit_only(ready, mk_client, app_db):
+    # kolom lama tetap ada dan tampil; tidak diisi lagi oleh alur kerja
+    from digitadlp.app.models import Document
     up, doc_id = ready
-    rev = mk_client("pemeriksa", unit="Unit B")
-    r = rev.post(f"/api/documents/{doc_id}/return", json={"reason": "Lampiran kurang"})
-    assert r.status_code == 200
-    assert rev.get(f"/api/documents/{doc_id}").json()["return_reason"] == "Lampiran kurang"
+    app_db.get(Document, doc_id).return_reason = "Lampiran kurang"
+    app_db.commit()
     assert up.get(f"/api/documents/{doc_id}").json()["return_reason"] == "Lampiran kurang"
-    mate = mk_client("pengunggah", unit="Unit A")
+    mate = mk_client("pengguna", unit="Unit A")
     assert mate.get(f"/api/documents/{doc_id}").json()["return_reason"] == "Lampiran kurang"
-    other = mk_client("pengunggah", unit="Unit C")
+    other = mk_client("pengguna", unit="Unit C")
     assert other.get(f"/api/documents/{doc_id}").status_code == 404
-    # daftar tidak memuat alasan
     assert all("return_reason" not in d for d in up.get("/api/documents").json())
 
 
-def test_reupload_clears_reason(ready, mk_client, make_pdf):
+def test_reupload_clears_reason(ready, mk_client, make_pdf, app_db):
+    from digitadlp.app.models import Document
     up, doc_id = ready
-    rev = mk_client("pemeriksa")
-    rev.post(f"/api/documents/{doc_id}/return", json={"reason": "Lampiran kurang"})
+    app_db.get(Document, doc_id).return_reason = "Lampiran kurang"
+    app_db.commit()
     r = up.post(f"/api/documents/{doc_id}/reupload",
                 files={"file": ("s.pdf", make_pdf(TEXT).read_bytes(), "application/pdf")})
     assert r.status_code == 200
@@ -182,9 +179,9 @@ def test_reupload_clears_reason(ready, mk_client, make_pdf):
 def test_owner_and_unit_names(ready):
     up, doc_id = ready
     d = up.get(f"/api/documents/{doc_id}").json()
-    assert d["owner_name"] == "Pengunggah1" and d["unit_name"] == "Unit A"
+    assert d["owner_name"] == "Pengguna1" and d["unit_name"] == "Unit A"
     row = up.get("/api/documents").json()[0]
-    assert row["owner_name"] == "Pengunggah1" and row["unit_name"] == "Unit A"
+    assert row["owner_name"] == "Pengguna1" and row["unit_name"] == "Unit A"
 
 
 def test_security_headers_on_unhandled_500(app):

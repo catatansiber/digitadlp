@@ -22,7 +22,7 @@ export function Dashboard() {
   const q = useDocuments({ status: status || undefined, mine });
   const docs = q.data ?? [];
   const all = useDocuments({}).data ?? []; // ringkasan tidak ikut filter
-  const canUpload = user?.role === "pengunggah" || user?.role === "pemeriksa";
+  const canUpload = user?.role === "pengguna";
 
   return (
     <section className="page">
@@ -66,7 +66,11 @@ export function Dashboard() {
       ) : q.isLoading ? (
         <p className="loading">Memuat…</p>
       ) : docs.length === 0 ? (
-        <EmptyState>Belum ada dokumen. Unggah dokumen pertama.</EmptyState>
+        <EmptyState>
+          {canUpload
+            ? "Belum ada dokumen. Unggah dokumen pertama."
+            : "Belum ada dokumen. Dokumen diunggah oleh akun Pengguna; buat akunnya di menu Admin → Pengguna."}
+        </EmptyState>
       ) : (
         <Table>
           <thead>

@@ -1,5 +1,3 @@
-from digitadlp.detect.employees import EmployeeDirectory
-from digitadlp.detect.ner import FakeNer
 from digitadlp.detect.pipeline import detect
 from digitadlp.models import Kind
 
@@ -7,80 +5,75 @@ TEXT = (
     "Nama: Siti Rahmawati, NIK 6474015203880002, mengajukan permohonan. "
     "Disetujui oleh Kepala Dinas, Drs. Bambang Sutrisno"
 )
-DIRECTORY = EmployeeDirectory.from_names(["Bambang Sutrisno"])
 
 
-def _ner():
-    return FakeNer(
-        {
-            "Siti Rahmawati": Kind.NAME_CITIZEN,
-            "Drs. Bambang Sutrisno": Kind.NAME_CITIZEN,
-        }
-    )
-
-
-def test_mockup_text_kinds_in_order():
-    found = detect(TEXT, _ner(), DIRECTORY)
-    assert [f.kind for f in found] == [
-        Kind.NAME_CITIZEN,
-        Kind.NIK,
-        Kind.NAME_EMPLOYEE,
-    ]
-    assert [f.start for f in found] == sorted(f.start for f in found)
-    assert [f.text for f in found] == [
-        "Siti Rahmawati",
-        "6474015203880002",
-        "Drs. Bambang Sutrisno",
-    ]
-
-
-def test_stronger_regex_beats_ner_overlap():
-    ner = FakeNer({"6474015203880002": Kind.ADDRESS})
-    found = detect(TEXT, ner, DIRECTORY)
+def test_detect_is_patterns_only():
+    found = detect("Nama Siti Rahmawati NIK 6474015203880002")
     assert [f.kind for f in found] == [Kind.NIK]
 
 
-def test_non_employee_name_stays_citizen():
-    found = detect(TEXT, _ner(), EmployeeDirectory.from_names([]))
-    assert Kind.NAME_EMPLOYEE not in [f.kind for f in found]
+def test_mockup_text_has_no_automatic_names():
+    found = detect(TEXT)
+    assert [(f.kind, f.text) for f in found] == [(Kind.NIK, "6474015203880002")]
 
 
-def test_equal_strength_longer_wins():
-    text = "Alamat Jalan Mawar Nomor 5 Bontang"
-    ner = FakeNer({"Jalan Mawar": Kind.ADDRESS, "Jalan Mawar Nomor 5": Kind.ADDRESS})
-    found = detect(text, ner, DIRECTORY)
-    assert [f.text for f in found] == ["Jalan Mawar Nomor 5"]
-
-
-def test_chain_overlaps_never_overlap():
-    text = "abcdefghij"
-    ner = FakeNer(
-        {"abcd": Kind.ADDRESS, "cdefg": Kind.ADDRESS, "fghij": Kind.ADDRESS}
-    )
-    found = detect(text, ner, DIRECTORY)
+def test_address_and_nik_both_found_without_overlap():
+    text = "NIK 6474015203880002 alamat Jalan Mawar Nomor 5 Bontang"
+    found = detect(text)
+    assert [f.kind for f in found] == [Kind.NIK, Kind.ADDRESS]
+    assert found[1].text == "Jalan Mawar Nomor 5 Bontang"
     for a, b in zip(found, found[1:]):
         assert a.end <= b.start
+
+
+def test_stronger_pattern_wins_inside_address():
+    # a phone inside an address span: union-span resolution keeps nothing leaking
+    text = "Jalan Mawar 081234567890 Bontang"
+    found = detect(text)
+    covered = "".join(text[f.start:f.end] for f in found)
+    assert "081234567890" in covered
+    for a, b in zip(found, found[1:]):
+        assert a.end <= b.start
+
+
+import pytest
+
+from digitadlp.detect import pipeline
+from digitadlp.models import Finding
+
+
+def _fake(monkeypatch, text, spans):
+    fs = [Finding(k, text.index(s), text.index(s) + len(s), s, "regex") for k, s in spans]
+    monkeypatch.setattr(pipeline, "find_patterns", lambda t: list(fs))
+
+
+def test_chain_overlaps_never_overlap(monkeypatch):
+    text = "abcdefghij"
+    _fake(monkeypatch, text, [(Kind.ADDRESS, "abcd"), (Kind.ADDRESS, "cdefg"), (Kind.ADDRESS, "fghij")])
+    found = detect(text)
     assert [(f.start, f.end, f.text) for f in found] == [(0, 10, "abcdefghij")]
 
 
-def test_mockup_result_never_overlaps():
-    found = detect(TEXT, _ner(), DIRECTORY)
-    for a, b in zip(found, found[1:]):
-        assert a.end <= b.start
-
-
-def test_partial_overlap_extends_winner_to_union():
+def test_partial_overlap_extends_winner_to_union(monkeypatch):
     text = "xx6474015203880002 Jalan"
-    ner = FakeNer({"xx6474015": Kind.ADDRESS})
-    found = detect(text, ner, DIRECTORY)
-    assert len(found) == 1
-    assert found[0].kind == Kind.NIK
-    assert found[0].text == text[: found[0].end]
-    assert found[0].start == 0
+    _fake(monkeypatch, text, [(Kind.NIK, "6474015203880002"), (Kind.ADDRESS, "xx6474015")])
+    found = detect(text)
+    assert [(f.kind, f.start, f.text) for f in found] == [(Kind.NIK, 0, "xx6474015203880002")]
 
 
-def test_contained_loser_changes_nothing():
+def test_contained_loser_changes_nothing(monkeypatch):
     text = "Alamat Jalan Mawar Nomor 5"
-    ner = FakeNer({"Jalan Mawar Nomor 5": Kind.ADDRESS, "Mawar": Kind.ADDRESS})
-    found = detect(text, ner, DIRECTORY)
-    assert [(f.start, f.text) for f in found] == [(7, "Jalan Mawar Nomor 5")]
+    _fake(monkeypatch, text, [(Kind.ADDRESS, "Jalan Mawar Nomor 5"), (Kind.ADDRESS, "Mawar")])
+    assert [(f.start, f.text) for f in detect(text)] == [(7, "Jalan Mawar Nomor 5")]
+
+
+def test_equal_strength_longer_wins(monkeypatch):
+    text = "Alamat Jalan Mawar Nomor 5 Bontang"
+    _fake(monkeypatch, text, [(Kind.ADDRESS, "Jalan Mawar"), (Kind.ADDRESS, "Jalan Mawar Nomor 5")])
+    assert [f.text for f in detect(text)] == ["Jalan Mawar Nomor 5"]
+
+
+def test_stronger_beats_weaker_overlap(monkeypatch):
+    text = "NIK 6474015203880002"
+    _fake(monkeypatch, text, [(Kind.ADDRESS, "6474015203880002"), (Kind.NIK, "6474015203880002")])
+    assert [f.kind for f in detect(text)] == [Kind.NIK]

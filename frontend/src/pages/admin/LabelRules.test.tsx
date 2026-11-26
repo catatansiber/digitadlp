@@ -43,7 +43,7 @@ test("restore defaults mirrors backend default_label_for", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Kembalikan bawaan" }));
   for (const k of ["Label NIK", "Label No. KK", "Label No. rekening", "Label NPWP"])
     expect(screen.getByLabelText(k)).toHaveValue("rahasia");
-  for (const k of ["Label Email", "Label No. HP", "Label Nama pegawai", "Label NIP", "Label Nama warga", "Label Alamat", "Label Tanggal lahir"])
+  for (const k of ["Label Email", "Label No. HP", "Label Nama pegawai", "Label NIP", "Label Nama orang", "Label Alamat", "Label Tanggal lahir"])
     expect(screen.getByLabelText(k)).toHaveValue("internal");
   expect(puts).toHaveLength(0); // belum tersimpan sampai Simpan
 });

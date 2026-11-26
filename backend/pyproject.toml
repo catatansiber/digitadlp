@@ -24,7 +24,6 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]"]
-ner = ["transformers", "torch"]
 dev = ["pytest", "httpx"]
 
 [tool.setuptools.packages.find]

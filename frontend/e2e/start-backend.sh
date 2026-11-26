@@ -11,7 +11,6 @@ export DIGITADLP_DATABASE_URL="sqlite:///$TMP/e2e.db"
 export DIGITADLP_STORAGE="$TMP/storage"
 export DIGITADLP_FERNET_KEY="$("$PY" -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())')"
 export DIGITADLP_COOKIE_SECURE=false
-export DIGITADLP_NER=fake
 export DIGITADLP_FRONTEND_DIR="$ROOT/frontend/dist"
 export DIGITADLP_HOST=127.0.0.1
 export DIGITADLP_PORT=8765

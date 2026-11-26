@@ -13,7 +13,6 @@ import { Review } from "./pages/Review";
 import { Versions } from "./pages/Versions";
 import { AdminLayout } from "./pages/admin/AdminLayout";
 import { Audit } from "./pages/admin/Audit";
-import { Employees } from "./pages/admin/Employees";
 import { LabelRules } from "./pages/admin/LabelRules";
 import { Units } from "./pages/admin/Units";
 import { Users } from "./pages/admin/Users";
@@ -47,7 +46,7 @@ export function AppRoutes() {
         <Route
           path="upload"
           element={
-            <RequireRole roles={["pengunggah", "pemeriksa"]}>
+            <RequireRole roles={["pengguna"]}>
               <Upload />
             </RequireRole>
           }
@@ -65,7 +64,6 @@ export function AppRoutes() {
           <Route index element={<Navigate to="pengguna" replace />} />
           <Route path="pengguna" element={<Users />} />
           <Route path="unit" element={<Units />} />
-          <Route path="pegawai" element={<Employees />} />
           <Route path="aturan-label" element={<LabelRules />} />
           <Route path="audit" element={<Audit />} />
         </Route>
