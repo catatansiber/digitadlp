@@ -568,3 +568,82 @@ def test_area_on_scanned_page_survives_reocr(make_scanned_pdf, tmp_path):
     assert NIK not in "".join(extract_pdf_text(out)).replace(" ", "")
     pix = page.get_pixmap(dpi=30)
     assert pix.pixel(pix.width // 2, pix.height // 4) == (0, 0, 0)
+
+
+def _inside(r, box, pad=0.5):
+    return (r.x0 >= box.x0 - pad and r.y0 >= box.y0 - pad
+            and r.x1 <= box.x1 + pad and r.y1 <= box.y1 + pad)
+
+
+def test_area_removes_vector_line_art(tmp_path):
+    d = fitz.open()
+    p = d.new_page()
+    p.draw_rect(fitz.Rect(120, 120, 180, 160), color=(0, 0, 1), width=2)
+    # "signature" polyline: mostly inside, tail sticks outside the area
+    p.draw_polyline([(130, 200), (160, 180), (190, 210), (260, 190)],
+                    color=(0, 0, 1), width=2)
+    p.draw_line((100, 500), (400, 500), color=(0, 1, 0), width=2)  # far away
+    p.insert_text((72, 700), "Halaman teks biasa dengan tanda tangan", fontsize=12)
+    src = tmp_path / "vec.pdf"
+    d.save(src)
+    W, H = p.rect.width, p.rect.height
+    d.close()
+    box = fitz.Rect(100, 100, 220, 230)
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, [[]], Version.PUBLIK,
+               areas=[(0, (box.x0 / W, box.y0 / H, box.x1 / W, box.y1 / H))])
+    page = fitz.open(out)[0]
+    draws = page.get_drawings()
+    for dr in draws:
+        if dr["rect"].intersects(box):
+            assert dr.get("fill") == (0.0, 0.0, 0.0)
+            assert dr.get("color") in (None, (0.0, 0.0, 0.0))
+            assert _inside(dr["rect"], box)
+    assert any(dr.get("fill") == (0.0, 0.0, 0.0) and _inside(dr["rect"], box)
+               and dr["rect"].width > 100 for dr in draws)
+    assert any(dr.get("color") == (0.0, 1.0, 0.0) for dr in draws)
+
+
+def test_internal_deletes_annots_in_area(tmp_path):
+    d = fitz.open()
+    p = d.new_page()
+    p.add_freetext_annot(fitz.Rect(110, 110, 200, 140), "CATATANRAHASIA")
+    p.add_freetext_annot(fitz.Rect(110, 500, 200, 530), "CATATANLAIN")
+    src = tmp_path / "ann.pdf"
+    d.save(src)
+    W, H = p.rect.width, p.rect.height
+    d.close()
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, [[]], Version.INTERNAL,
+               areas=[(0, (100 / W, 100 / H, 220 / W, 150 / H))])
+    page = fitz.open(out)[0]
+    infos = [a.info["content"] for a in page.annots()]
+    assert infos == ["CATATANLAIN"]
+    assert b"CATATANRAHASIA" not in out.read_bytes()
+
+
+@pytest.mark.parametrize("rot", [0, 90, 180, 270])
+@pytest.mark.parametrize("crop", [False, True])
+def test_area_rotation_and_mediabox_origin(tmp_path, rot, crop):
+    d = fitz.open()
+    p = d.new_page()
+    p.insert_text((150, 200), "TARGETX", fontsize=12)
+    p.insert_text((150, 600), "KEEPY", fontsize=12)
+    if crop:
+        p.set_mediabox(fitz.Rect(50, 50, 550, 750))
+    p.set_rotation(rot)
+    src = tmp_path / "s.pdf"
+    d.save(src)
+    d.close()
+    _, box = _area_of(src, "TARGETX")
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, [[]], Version.PUBLIK, areas=[(0, box)])
+    q = fitz.open(out)[0]
+    t = q.get_text()
+    assert "TARGETX" not in t and "KEEPY" in t
+    # black fill drawn where the user saw the text (display space)
+    pix = q.get_pixmap(dpi=72)
+    W, H = q.rect.width, q.rect.height
+    cx = int((box[0] + box[2]) / 2 * W)
+    cy = int((box[1] + box[3]) / 2 * H)
+    assert pix.pixel(cx, cy) == (0, 0, 0)

@@ -513,6 +513,38 @@ def _token_leaks(page, f: Finding, rects, ocr_words, labels=()) -> bool:
     return any(t in words for t in toks)
 
 
+def _area_rects(page: fitz.Page, boxes) -> list[fitz.Rect]:
+    """Display-space fractions (of page.rect) -> unrotated page coordinates."""
+    W, H = page.rect.width, page.rect.height
+    out = []
+    for x0, y0, x1, y1 in boxes:
+        r = fitz.Rect(x0 * W, y0 * H, x1 * W, y1 * H) * page.derotation_matrix
+        r.normalize()
+        out.append(r)
+    return out
+
+
+def _apply_areas(page: fitz.Page, rects: list[fitz.Rect]) -> None:
+    """Separate pass: remove text, image pixels and any touched line art."""
+    if not rects:
+        return
+    # MuPDF misplaces the redaction fill on rotated pages whose mediabox
+    # origin is not (0, 0); rects are unrotated, so redact at rotation 0.
+    rot = page.rotation
+    if rot:
+        page.set_rotation(0)
+    try:
+        for r in rects:
+            page.add_redact_annot(r, fill=(0, 0, 0))
+        page.apply_redactions(
+            images=fitz.PDF_REDACT_IMAGE_PIXELS,
+            graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,
+        )
+    finally:
+        if rot:
+            page.set_rotation(rot)
+
+
 def redact_pdf(
     src: Path,
     dst: Path,
@@ -547,23 +579,19 @@ def redact_pdf(
                 scanned.append(i)
             for link in page.get_links():
                 page.delete_link(link)
+            area_rects = _area_rects(page, areas_by_page.get(i, []))
             for annot in list(page.annots() or []):
                 if (version == Version.PUBLIK
-                        or annot.type[0] == fitz.PDF_ANNOT_FILE_ATTACHMENT):
+                        or annot.type[0] == fitz.PDF_ANNOT_FILE_ATTACHMENT
+                        or any(annot.rect.intersects(r) for r in area_rects)):
                     page.delete_annot(annot)
             findings = findings_per_page[i] if i < len(findings_per_page) else []
             targets = [
                 (f, a) for f in findings
                 if (a := action_for(f, version)) in (Action.REDACT, Action.MASK)
             ]
-            page_areas = areas_by_page.get(i, [])
-            if not targets and not page_areas:
+            if not targets and not area_rects:
                 continue
-            for x0, y0, x1, y1 in page_areas:
-                W, H = page.rect.width, page.rect.height
-                r = fitz.Rect(x0 * W, y0 * H, x1 * W, y1 * H) * page.derotation_matrix
-                r.normalize()
-                page.add_redact_annot(r, fill=(0, 0, 0))
             all_targets += [f for f, _ in targets]
             has_regions = kind == "text" and bool(_image_rects(page))
             if kind != "text":
@@ -587,6 +615,7 @@ def redact_pdf(
                 images=fitz.PDF_REDACT_IMAGE_PIXELS,
                 graphics=fitz.PDF_REDACT_LINE_ART_NONE,
             )
+            _apply_areas(page, area_rects)
             check = _ocr_text(page) if is_scan else page.get_text()
             if kind == "hybrid":
                 check += "\n" + _ocr_text(page)
