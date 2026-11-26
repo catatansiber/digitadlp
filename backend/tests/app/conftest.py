@@ -54,7 +54,7 @@ def app_db(app):
         yield session
 
 
-def make_user(db, username, role=Role.PENGUNGGAH, unit_name="Unit A", password="rahasia123"):
+def make_user(db, username, role=Role.PENGGUNA, unit_name="Unit A", password="rahasia123"):
     unit = db.scalar(select(Unit).where(Unit.name == unit_name))
     if unit is None:
         unit = Unit(name=unit_name)

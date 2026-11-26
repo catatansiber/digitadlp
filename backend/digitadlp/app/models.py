@@ -17,15 +17,13 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Role(StrEnum):
-    PENGUNGGAH = "pengunggah"
-    PEMERIKSA = "pemeriksa"
+    PENGGUNA = "pengguna"
     ADMIN = "admin"
 
 
 class Status(StrEnum):
     DIPROSES = "diproses"
     MENUNGGU_CEK = "menunggu_cek"
-    DIKEMBALIKAN = "dikembalikan"
     MEMBUAT_VERSI = "membuat_versi"
     DISETUJUI = "disetujui"
     DIRILIS = "dirilis"

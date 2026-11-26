@@ -16,11 +16,11 @@ def login(client, username="budi", password="rahasia123"):
 
 
 def test_login_ok_sets_httponly_cookie(client, app_db):
-    make_user(app_db, "budi", Role.PEMERIKSA, "Biro Umum")
+    make_user(app_db, "budi", Role.PENGGUNA, "Biro Umum")
     r = login(client)
     assert r.status_code == 200
     body = r.json()
-    assert body["role"] == "pemeriksa" and body["unit"] == "Biro Umum"
+    assert body["role"] == "pengguna" and body["unit"] == "Biro Umum"
     assert body["full_name"] == "Budi" and body["id"]
     h = r.headers["set-cookie"].lower()
     assert "digitadlp_session=" in h and "httponly" in h and "samesite=strict" in h
@@ -131,7 +131,7 @@ def test_require_role_403(app, client, app_db):
     def any_user(user: User = Depends(current_user)):
         return {"ok": True}
 
-    make_user(app_db, "budi", Role.PENGUNGGAH)
+    make_user(app_db, "budi", Role.PENGGUNA)
     make_user(app_db, "ani", Role.ADMIN)
     assert client.get("/_only_admin").status_code == 401
     login(client, "budi")

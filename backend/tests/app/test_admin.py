@@ -79,31 +79,36 @@ def test_units_crud(admin, aapp):
 def test_admin_crud_user(admin, aapp, login):
     unit = admin.post("/api/admin/units", json={"name": "Bidang IKP"}).json()
     r = admin.post("/api/admin/users", json={"username": "rina", "full_name": "Rina",
-                                          "role": "pengunggah", "unit_id": unit["id"],
+                                          "role": "pengguna", "unit_id": unit["id"],
                                           "password": "pendek"})
     assert r.status_code == 422
     assert r.json()["detail"] == "Kata sandi minimal 10 karakter."
     r = admin.post("/api/admin/users", json={"username": "rina", "full_name": "Rina",
-                                          "role": "pengunggah", "unit_id": unit["id"],
+                                          "role": "pengguna", "unit_id": unit["id"],
                                           "password": "rahasia12345"})
     assert r.status_code == 201, r.text
     uid = r.json()["id"]
     assert "password" not in r.text and "password_hash" not in r.json()
     assert r.json()["unit"] == "Bidang IKP" and r.json()["active"] is True
     r = admin.post("/api/admin/users", json={"username": "rina", "full_name": "X",
-                                          "role": "pengunggah", "unit_id": unit["id"],
+                                          "role": "pengguna", "unit_id": unit["id"],
                                           "password": "rahasia12345"})
     assert r.status_code == 409
     assert any(u["id"] == uid for u in admin.get("/api/admin/users").json())
-    r = admin.patch(f"/api/admin/users/{uid}", json={"role": "pemeriksa"})
-    assert r.status_code == 200 and r.json()["role"] == "pemeriksa"
+    r = admin.patch(f"/api/admin/users/{uid}", json={"role": "admin"})
+    assert r.status_code == 200 and r.json()["role"] == "admin"
     r = admin.patch(f"/api/admin/users/{uid}", json={"password": "kataSandiBaru1"})
     assert r.status_code == 200
     c = login("rina", "kataSandiBaru1")
-    assert c.get("/api/auth/me").json()["role"] == "pemeriksa"
+    assert c.get("/api/auth/me").json()["role"] == "admin"
     assert admin.patch("/api/admin/users/" + "0" * 32, json={"active": False}).status_code == 404
     assert admin.patch(f"/api/admin/users/{uid}", json={"unit_id": "0" * 32}).status_code == 422
     assert admin.patch(f"/api/admin/users/{uid}", json={"role": "raja"}).status_code == 422
+    for old in ("pemeriksa", "pengunggah"):
+        assert admin.patch(f"/api/admin/users/{uid}", json={"role": old}).status_code == 422
+        assert admin.post("/api/admin/users", json={
+            "username": "x" + old, "full_name": "X", "role": old, "unit_id": unit["id"],
+            "password": "rahasia12345"}).status_code == 422
     acts = _actions(aapp)
     assert "user_dibuat" in acts and acts.count("user_diubah") >= 2
     with aapp.state.session_factory() as db:
@@ -127,7 +132,7 @@ def test_deactivate_kills_sessions(admin, aapp, login):
 
 def test_admin_cannot_lock_self_out(admin, aapp):
     me = admin.get("/api/auth/me").json()["id"]
-    for body in ({"active": False}, {"role": "pemeriksa"}):
+    for body in ({"active": False}, {"role": "pengguna"}):
         r = admin.patch(f"/api/admin/users/{me}", json=body)
         assert r.status_code == 409
         assert r.json()["detail"] == "Admin tidak bisa menonaktifkan atau menurunkan peran akunnya sendiri."
@@ -142,7 +147,7 @@ ROUTES = [
 ]
 
 
-@pytest.mark.parametrize("role", ["pengunggah", "pemeriksa"])
+@pytest.mark.parametrize("role", ["pengguna"])
 @pytest.mark.parametrize("method,path,body", ROUTES)
 def test_non_admin_403(aapp, login, role, method, path, body):
     with aapp.state.session_factory() as db:
@@ -234,7 +239,7 @@ def test_password_reset_and_role_change_kill_target_sessions(admin, aapp, login)
     admin.patch(f"/api/admin/users/{uid}", json={"password": "SandiBaru12345"})
     assert _sessions(aapp, uid) == [] and c.get("/api/auth/me").status_code == 401
     c = login("siti", "SandiBaru12345")
-    admin.patch(f"/api/admin/users/{uid}", json={"role": "pemeriksa"})
+    admin.patch(f"/api/admin/users/{uid}", json={"role": "admin"})
     assert _sessions(aapp, uid) == [] and c.get("/api/auth/me").status_code == 401
 
 
