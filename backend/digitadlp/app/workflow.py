@@ -222,12 +222,10 @@ def add_area(db: Session, user: User, doc: Document, page: int,
     a = AreaRedaction(document_id=doc.id, page=page, x0=x0, y0=y0, x1=x1, y1=y1,
                       author_id=user.id)
     db.add(a)
-    approved = doc.status == Status.DISETUJUI
-    if approved:
-        _invalidate(doc)
+    _invalidate(doc)
     _record(db, user, "area_tambah", doc, detail=f"hal={page}")
     db.commit()
-    if approved and store is not None:
+    if store is not None:
         store.delete_versions(doc.id)
     return a
 
@@ -241,12 +239,10 @@ def delete_area(db: Session, user: User, doc: Document, area_id: str,
         raise WorkflowError(404, MSG_AREA_NOT_FOUND)
     page = a.page
     db.delete(a)
-    approved = doc.status == Status.DISETUJUI
-    if approved:
-        _invalidate(doc)
+    _invalidate(doc)
     _record(db, user, "area_hapus", doc, detail=f"hal={page}")
     db.commit()
-    if approved and store is not None:
+    if store is not None:
         store.delete_versions(doc.id)
 
 

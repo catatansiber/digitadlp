@@ -152,3 +152,23 @@ def test_migration_0005_upgrade(tmp_path):
                     "author_id", "created_at"}
     command.downgrade(cfg, "0004")
     assert "area_redactions" not in inspect(create_engine(url)).get_table_names()
+
+
+def test_area_change_discards_stale_versi_job(client_as, work, make_pdf, wapp):
+    from digitadlp.app.jobs import enqueue
+    from digitadlp.app.models import Document, JobKind
+
+    up, doc_id = _ready(client_as, work, make_pdf)
+    # a versi job enqueued at the current revision (approve racing an area add)
+    with wapp.state.session_factory() as db:
+        doc = db.get(Document, doc_id)
+        rev = doc.revision
+        enqueue(db, JobKind.VERSI, doc)
+        db.commit()
+    r = up.post(f"/api/documents/{doc_id}/areas", json=BOX)
+    assert r.status_code == 201
+    assert up.get(f"/api/documents/{doc_id}").json()["revision"] == rev + 1
+    work()
+    assert not wapp.state.store.exists(doc_id, "publik.pdf")
+    assert up.delete(f"/api/documents/{doc_id}/areas/{r.json()['id']}").status_code == 204
+    assert up.get(f"/api/documents/{doc_id}").json()["revision"] == rev + 2

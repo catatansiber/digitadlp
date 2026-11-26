@@ -647,3 +647,64 @@ def test_area_rotation_and_mediabox_origin(tmp_path, rot, crop):
     cx = int((box[0] + box[2]) / 2 * W)
     cy = int((box[1] + box[3]) / 2 * H)
     assert pix.pixel(cx, cy) == (0, 0, 0)
+
+
+def test_area_verification_fails_closed(tmp_path, monkeypatch):
+    src = _text_pdf(tmp_path / "v.pdf", [((72, 100), "RAHASIAKOTAK")])
+    area = _area_of(src, "RAHASIAKOTAK")
+    monkeypatch.setattr(pdfmod, "_apply_areas", lambda page, rects: None)
+    with pytest.raises(DocumentError):
+        redact_pdf(src, tmp_path / "o.pdf", [[]], Version.PUBLIK, areas=[area])
+
+
+def test_area_verification_fails_closed_scanned(make_scanned_pdf, tmp_path, monkeypatch):
+    src = make_scanned_pdf(TEXT)
+    monkeypatch.setattr(pdfmod, "_apply_areas", lambda page, rects: None)
+    with pytest.raises(DocumentError):
+        redact_pdf(src, tmp_path / "o.pdf", [[]], Version.PUBLIK,
+                   areas=[(0, (0.0, 0.0, 1.0, 0.5))])
+
+
+def test_internal_deletes_annots_in_area_rotated(tmp_path):
+    d = fitz.open()
+    p = d.new_page()
+    p.add_freetext_annot(fitz.Rect(110, 110, 200, 140), "CATATANRAHASIA")
+    p.add_freetext_annot(fitz.Rect(110, 500, 200, 530), "CATATANLAIN")
+    p.set_rotation(90)
+    src = tmp_path / "ann.pdf"
+    d.save(src)
+    # display-space box of the unrotated annot rect
+    r = fitz.Rect(100, 100, 220, 150) * p.rotation_matrix
+    r.normalize()
+    W, H = p.rect.width, p.rect.height
+    d.close()
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, [[]], Version.INTERNAL,
+               areas=[(0, (r.x0 / W, r.y0 / H, r.x1 / W, r.y1 / H))])
+    page = fitz.open(out)[0]
+    assert [a.info["content"] for a in page.annots()] == ["CATATANLAIN"]
+    assert b"CATATANRAHASIA" not in out.read_bytes()
+
+
+def test_area_rot90_mediabox_origin_and_cropbox(tmp_path):
+    d = fitz.open()
+    p = d.new_page()
+    p.set_mediabox(fitz.Rect(50, 50, 550, 750))
+    p.set_cropbox(fitz.Rect(100, 120, 500, 700))
+    p.insert_text((60, 100), "TARGETX", fontsize=12)
+    p.insert_text((60, 400), "KEEPY", fontsize=12)
+    p.set_rotation(90)
+    src = tmp_path / "s.pdf"
+    d.save(src)
+    d.close()
+    _, box = _area_of(src, "TARGETX")
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, [[]], Version.PUBLIK, areas=[(0, box)])
+    q = fitz.open(out)[0]
+    t = q.get_text()
+    assert "TARGETX" not in t and "KEEPY" in t
+    pix = q.get_pixmap(dpi=72)
+    W, H = q.rect.width, q.rect.height
+    cx = int((box[0] + box[2]) / 2 * W)
+    cy = int((box[1] + box[3]) / 2 * H)
+    assert pix.pixel(cx, cy) == (0, 0, 0)

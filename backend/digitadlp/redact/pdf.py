@@ -545,6 +545,30 @@ def _apply_areas(page: fitz.Page, rects: list[fitz.Rect]) -> None:
             page.set_rotation(rot)
 
 
+def _centre_in(r: fitz.Rect, box: fitz.Rect, tol: float = 0.5) -> bool:
+    cx, cy = (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2
+    return (box.x0 - tol <= cx <= box.x1 + tol
+            and box.y0 - tol <= cy <= box.y1 + tol)
+
+
+def _verify_areas(page: fitz.Page, rects: list[fitz.Rect], kind: str) -> None:
+    """Fail closed if any text or OCR word remains inside an area box.
+    `rects` are unrotated page coordinates (same space as get_text words);
+    OCR word boxes are in display space, so map them back first."""
+    if not rects:
+        return
+    for w in page.get_text("words"):
+        wr = fitz.Rect(w[:4])
+        if any(_centre_in(wr, r) for r in rects):
+            raise DocumentError("text remains inside area redaction")
+    if kind != "text":
+        for _, wr in _ocr_words(page):
+            wr = wr * page.derotation_matrix
+            wr.normalize()
+            if any(_centre_in(wr, r) for r in rects):
+                raise DocumentError("OCR text remains inside area redaction")
+
+
 def redact_pdf(
     src: Path,
     dst: Path,
@@ -616,6 +640,7 @@ def redact_pdf(
                 graphics=fitz.PDF_REDACT_LINE_ART_NONE,
             )
             _apply_areas(page, area_rects)
+            _verify_areas(page, area_rects, kind)
             check = _ocr_text(page) if is_scan else page.get_text()
             if kind == "hybrid":
                 check += "\n" + _ocr_text(page)
