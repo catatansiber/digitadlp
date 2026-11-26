@@ -464,10 +464,15 @@ def test_letterhead_page_end_to_end(make_scanned_pdf, tmp_path):
     assert "Santoso" not in got and "Mawar" not in got
 
 
-def test_fallback_partial_anchor_group_fails_closed(make_pdf, tmp_path):
-    text = "Taman Mawar Indah\n\n\n\n\n\n\n\n\nAlamat Jl. Mawar No. 5\nKota Contoh"
+@pytest.mark.parametrize("split", ["", "\n"])
+def test_lone_word_elsewhere_does_not_fail(make_pdf, tmp_path, split):
+    addr = f"Jl. Mawar No. 5{split or ' '}Bontang"
+    text = f"Taman Mawar Indah\n\n\n\n\n\n\nAlamat {addr}\n\n\n\n\n\n\nBontang, 4 November 2024"
     src = make_pdf(text)
     s = text.index("Jl.")
-    f = Finding(Kind.ADDRESS, s, len(text), text[s:], "test")
-    with pytest.raises(DocumentError):
-        redact_pdf(src, tmp_path / "o.pdf", [[f]], Version.PUBLIK)
+    f = Finding(Kind.ADDRESS, s, s + len(addr), addr, "test")
+    out = tmp_path / "o.pdf"
+    redact_pdf(src, out, [[f]], Version.PUBLIK)
+    got = fitz.open(out)[0].get_text()
+    assert "Bontang, 4 November 2024" in got and "Taman Mawar Indah" in got
+    assert "Jl. Mawar" not in got and got.count("Bontang") == 1

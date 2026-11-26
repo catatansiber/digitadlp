@@ -307,7 +307,7 @@ def _locate(page: fitz.Page, words, f: Finding) -> list[tuple[fitz.Rect, str]]:
     # Anchor on the first long token (else the first token); every other
     # token is accepted only near an anchor hit (a few lines above/below,
     # across the page width), never page-wide. An anchor hit whose
-    # surroundings miss any required token makes it fail closed.
+    # surroundings miss a required token is skipped; none complete -> fail.
     long_toks = [t for t in toks if len(_norm(t)) >= 3]
     anchor = (long_toks or toks)[0]
     rest = list(toks)
@@ -319,10 +319,10 @@ def _locate(page: fitz.Page, words, f: Finding) -> list[tuple[fitz.Rect, str]]:
         for tok in dict.fromkeys(rest):
             th = [(r, t) for r, t in hits[tok] if fitz.Rect(r).intersects(near)]
             if not th:
-                # a lone anchor elsewhere may be part of this finding: fail closed
-                raise DocumentError(f"cannot locate part of {f.kind} finding")
+                break
             group += th
-        out += [h for h in group if h not in out]
+        else:
+            out += [h for h in group if h not in out]
     if not out:
         raise DocumentError(f"cannot locate part of {f.kind} finding")
     return out
