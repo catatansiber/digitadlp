@@ -105,8 +105,8 @@ test("upload 401 triggers session-expired flow", async () => {
   expect(await screen.findByLabelText("Nama pengguna")).toBeInTheDocument();
 });
 
-test("pemeriksa may upload, admin may not", async () => {
-  server.use(meAs({ ...uploader, role: "pemeriksa" }));
+test("pengguna may upload, admin may not", async () => {
+  server.use(meAs(uploader));
   renderApp("/upload");
   expect(await screen.findByRole("heading", { name: "Unggah dokumen" })).toBeInTheDocument();
 });

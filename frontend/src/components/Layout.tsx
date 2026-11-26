@@ -4,8 +4,8 @@ import { useAuth } from "../auth/AuthProvider";
 import { Button } from "./Button";
 
 const TABS: { to: string; label: string; roles: Role[]; end?: boolean }[] = [
-  { to: "/", label: "Beranda", roles: ["pengunggah", "pemeriksa", "admin"], end: true },
-  { to: "/upload", label: "Unggah", roles: ["pengunggah", "pemeriksa"] },
+  { to: "/", label: "Beranda", roles: ["pengguna", "admin"], end: true },
+  { to: "/upload", label: "Unggah", roles: ["pengguna"] },
   { to: "/admin/pengguna", label: "Admin", roles: ["admin"] },
 ];
 

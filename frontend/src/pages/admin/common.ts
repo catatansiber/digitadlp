@@ -13,7 +13,7 @@ export type AdminUser = {
   id: string;
   username: string;
   full_name: string;
-  role: "pengunggah" | "pemeriksa" | "admin";
+  role: "pengguna" | "admin";
   unit_id: string;
   unit: string;
   active: boolean;

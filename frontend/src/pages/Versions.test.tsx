@@ -10,7 +10,7 @@ import { meAs, server, uploader } from "../test/server";
 import { renderApp } from "../test/render";
 import type { Me } from "../api/types";
 
-const reviewer: Me = { id: "00000000000000000000000000000003", full_name: "Dedi Pemeriksa", role: "pemeriksa", unit: "Diskominfo" };
+const mate: Me = { id: "00000000000000000000000000000009", full_name: "Rina Rekan", role: "pengguna", unit: "Bagian Umum" };
 const adminU: Me = { id: "00000000000000000000000000000002", full_name: "Sari Admin", role: "admin", unit: "Diskominfo" };
 
 let doc: Record<string, unknown>;
@@ -104,7 +104,7 @@ test("404 disables that card with server message", async () => {
 });
 
 test("release needs confirm step", async () => {
-  await open(reviewer);
+  await open(uploader);
   await userEvent.click(screen.getByRole("button", { name: "Rilis versi Publik" }));
   expect(releases).toBe(0);
   const dlg = screen.getByRole("dialog");
@@ -123,13 +123,18 @@ test("release shown for admin", async () => {
   expect(screen.getByRole("button", { name: "Rilis versi Publik" })).toBeInTheDocument();
 });
 
-test("release hidden for pengunggah", async () => {
+test("versions: owner can release; unit mate cannot", async () => {
   await open(uploader);
+  expect(screen.getByRole("button", { name: "Rilis versi Publik" })).toBeInTheDocument();
+});
+
+test("release hidden for non-owner pengguna", async () => {
+  await open(mate);
   expect(screen.queryByRole("button", { name: "Rilis versi Publik" })).toBeNull();
 });
 
 test("release error shows server detail", async () => {
-  await open(reviewer);
+  await open(uploader);
   server.use(
     http.post("/api/documents/d1/release", () =>
       HttpResponse.json({ detail: "Status dokumen tidak sesuai." }, { status: 409 }),
@@ -142,7 +147,7 @@ test("release error shows server detail", async () => {
 
 test("status not ready shows message and back link, no cards", async () => {
   doc = { ...doc, status: "menunggu_cek" };
-  await open(reviewer);
+  await open(uploader);
   expect(screen.getByText("Versi belum tersedia. Dokumen berstatus Menunggu cek.")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Kembali ke cek temuan/ })).toHaveAttribute("href", "/dokumen/d1");
   expect(screen.queryByRole("button", { name: "Unduh" })).toBeNull();

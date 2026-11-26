@@ -2,7 +2,7 @@ import { setupServer } from "msw/node";
 import { http, HttpResponse } from "msw";
 import type { Me } from "../api/types";
 
-export const uploader: Me = { id: "00000000000000000000000000000001", full_name: "Budi Santoso", role: "pengunggah", unit: "Bagian Umum" };
+export const uploader: Me = { id: "00000000000000000000000000000001", full_name: "Budi Santoso", role: "pengguna", unit: "Bagian Umum" };
 export const admin: Me = { id: "00000000000000000000000000000002", full_name: "Sari Admin", role: "admin", unit: "Diskominfo" };
 
 export const meUnauth = http.get("/api/auth/me", () =>

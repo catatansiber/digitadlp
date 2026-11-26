@@ -3,7 +3,7 @@ import { LABEL_TEXT, STATUS_TEXT, type LabelValue, type StatusValue } from "../l
 
 const LABEL_TONE: Record<LabelValue, "pub" | "int" | "rah"> = { publik: "pub", internal: "int", rahasia: "rah" };
 const STATUS_TONE: Record<StatusValue, "pub" | "int" | "rah" | "neu"> = {
-  diproses: "neu", menunggu_cek: "int", dikembalikan: "rah", membuat_versi: "neu",
+  diproses: "neu", menunggu_cek: "int", membuat_versi: "neu",
   disetujui: "pub", dirilis: "pub", gagal: "rah",
 };
 

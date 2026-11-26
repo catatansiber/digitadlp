@@ -51,7 +51,7 @@ test("admin has no upload button", async () => {
   renderApp("/");
   expect(
     await screen.findByText(
-      "Belum ada dokumen. Dokumen diunggah oleh akun Pengunggah atau Pemeriksa; buat akunnya di menu Admin → Pengguna.",
+      "Belum ada dokumen. Dokumen diunggah oleh akun Pengguna; buat akunnya di menu Admin → Pengguna.",
     ),
   ).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Unggah dokumen/ })).toBeNull();

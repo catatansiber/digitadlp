@@ -8,12 +8,12 @@ import { LabelChip, StatusChip } from "../components/StatusChip";
 import { Toast } from "../components/Toast";
 import { LABEL_TEXT, STATUS_TEXT, type LabelValue, type StatusValue } from "../lib/labels";
 
-type DocInfo = { id: string; title: string; status: string };
+type DocInfo = { id: string; title: string; status: string; owner_id?: string };
 
 const VERSIONS: { key: LabelValue; desc: string }[] = [
   { key: "publik", desc: "Semua data pribadi warga dihapus dari file. Metadata, komentar, dan riwayat revisi dibuang." },
   { key: "internal", desc: "Penyamaran sebagian. NIK, KK, dan rekening tetap tidak utuh." },
-  { key: "rahasia", desc: "Dokumen utuh. Hanya unit pemilik dan Pemeriksa. Tiap akses dicatat." },
+  { key: "rahasia", desc: "Dokumen utuh. Hanya unit pemilik. Tiap akses dicatat." },
 ];
 
 const msg = (e: unknown) => (e instanceof ApiError ? e.detail : FALLBACK_MESSAGE);
@@ -88,7 +88,7 @@ function VersionsFor({ id }: { id: string }) {
     );
 
   const ready = doc.status === "disetujui" || doc.status === "dirilis";
-  const canRelease = (user?.role === "pemeriksa" || user?.role === "admin") && doc.status === "disetujui";
+  const canRelease = (user?.role === "admin" || (!!user && doc.owner_id === user.id)) && doc.status === "disetujui";
   const statusText = doc.status in STATUS_TEXT ? STATUS_TEXT[doc.status as StatusValue] : doc.status;
 
   return (

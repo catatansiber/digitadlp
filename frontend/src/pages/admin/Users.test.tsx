@@ -16,7 +16,7 @@ let patches: { id: string; body: Record<string, unknown> }[];
 beforeEach(() => {
   users = [
     { id: "00000000000000000000000000000002", username: "sari", full_name: "Sari Admin", role: "admin", unit_id: "u2", unit: "Diskominfo", active: true },
-    { id: "5", username: "budi", full_name: "Budi", role: "pengunggah", unit_id: "u1", unit: "Bagian Umum", active: true },
+    { id: "5", username: "budi", full_name: "Budi", role: "pengguna", unit_id: "u1", unit: "Bagian Umum", active: true },
   ];
   posts = [];
   patches = [];
@@ -56,7 +56,7 @@ test("create user validates password length client-side", async () => {
   await userEvent.type(pw, "sandi-panjang-1");
   await userEvent.click(screen.getByRole("button", { name: "Tambah pengguna" }));
   await waitFor(() => expect(posts).toHaveLength(1));
-  expect(posts[0]).toMatchObject({ username: "ani", full_name: "Ani", unit_id: "u1", role: "pengunggah", password: "sandi-panjang-1" });
+  expect(posts[0]).toMatchObject({ username: "ani", full_name: "Ani", unit_id: "u1", role: "pengguna", password: "sandi-panjang-1" });
   await waitFor(() => expect(screen.getByLabelText("Kata sandi")).toHaveValue(""));
 });
 
@@ -78,9 +78,9 @@ test("deactivate calls PATCH active=false", async () => {
 
 test("role and unit changes send PATCH", async () => {
   await open();
-  await userEvent.selectOptions(within(rowOf("budi")).getByLabelText("Peran budi"), "pemeriksa");
+  await userEvent.selectOptions(within(rowOf("budi")).getByLabelText("Peran budi"), "admin");
   await waitFor(() => expect(patches).toHaveLength(1));
-  expect(patches[0].body).toEqual({ role: "pemeriksa" });
+  expect(patches[0].body).toEqual({ role: "admin" });
   await userEvent.selectOptions(within(rowOf("budi")).getByLabelText("Unit budi"), "u2");
   await waitFor(() => expect(patches).toHaveLength(2));
   expect(patches[1].body).toEqual({ unit_id: "u2" });
@@ -114,4 +114,12 @@ test("409 from server is shown", async () => {
   await open();
   await userEvent.click(within(rowOf("budi")).getByRole("button", { name: "Nonaktifkan" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Admin tidak bisa menonaktifkan");
+});
+
+test("users: role options are Pengguna and Admin", async () => {
+  await open();
+  const sel = within(rowOf("budi")).getByLabelText("Peran budi");
+  expect(within(sel).getAllByRole("option").map((o) => o.textContent)).toEqual(["Pengguna", "Admin"]);
+  const form = screen.getByLabelText("Peran");
+  expect(within(form).getAllByRole("option").map((o) => o.textContent)).toEqual(["Pengguna", "Admin"]);
 });

@@ -8,8 +8,7 @@ import { Toast } from "../../components/Toast";
 import { errText, isAuthError, MIN_PASSWORD, MSG_PASSWORD, type AdminUser, type Unit } from "./common";
 
 const ROLES: { value: AdminUser["role"]; text: string }[] = [
-  { value: "pengunggah", text: "Pengunggah" },
-  { value: "pemeriksa", text: "Pemeriksa" },
+  { value: "pengguna", text: "Pengguna" },
   { value: "admin", text: "Admin" },
 ];
 
@@ -56,7 +55,7 @@ export function Users() {
     },
   });
 
-  const [f, setF] = useState({ username: "", full_name: "", role: "pengunggah", unit_id: "", password: "" });
+  const [f, setF] = useState({ username: "", full_name: "", role: "pengguna", unit_id: "", password: "" });
   const unitId = f.unit_id || units.data?.[0]?.id || "";
 
   function submit(e: FormEvent) {
