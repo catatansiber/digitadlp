@@ -372,3 +372,93 @@ def test_word_equal_to_a_placeholder_is_not_a_false_leak(make_pdf, tmp_path):
     redact_pdf(src, out, pages, Version.PUBLIK)
     text = fitz.open(out)[0].get_text()
     assert NIK not in text and "Rahmawati" not in text
+
+
+# ---- orientation, vicinity ----
+needs_tess = pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract missing")
+ROT_NIP = "197402192001121004"
+ROT_TEXT = (
+    "DAFTAR HADIR PEGAWAI\n"
+    "No   Uraian            Keterangan\n"
+    "1    Rapat koordinasi  hadir\n"
+    f"Pemohon NIK {NIK}\n"
+    "Mengetahui, Kepala Dinas\n"
+    "Budi Santoso\n"
+    "NIP. 19740219 200112 1 004"
+)
+
+
+def _upright_digits(path):
+    """digits of an orientation-aware OCR of every page of path"""
+    doc = fitz.open(path)
+    try:
+        return "".join(re.sub(r"\D", "", pdfmod._ocr_text(p)) for p in doc)
+    finally:
+        doc.close()
+
+
+@needs_tess
+@pytest.mark.parametrize("angle", [90, 270])
+def test_rotated_scan_extracted_and_redacted(make_rotated_scanned_pdf, tmp_path, angle):
+    src = make_rotated_scanned_pdf(ROT_TEXT, angle)
+    text = extract_pdf_text(src)[0]
+    assert "Kepala" in text and "DAFTAR" in text
+    assert NIK in text.replace(" ", "")
+    assert ROT_NIP in re.sub(r"\D", "", text)
+    out = _run(src, tmp_path, Version.PUBLIK)
+    digits = _upright_digits(out)
+    assert NIK not in digits and ROT_NIP not in digits
+    layer = "".join(extract_pdf_text(out))
+    assert NIK not in re.sub(r"\D", "", layer)
+    assert "Kepala" in layer
+
+
+def test_osd_failure_falls_back_to_best_rotation(make_rotated_scanned_pdf, monkeypatch):
+    import pytesseract
+
+    if shutil.which("tesseract") is None:
+        pytest.skip("tesseract missing")
+
+    def no_osd(*a, **k):
+        raise pytesseract.TesseractError(1, "Too few characters")
+    monkeypatch.setattr(pytesseract, "image_to_osd", no_osd)
+    text = extract_pdf_text(make_rotated_scanned_pdf(ROT_TEXT, 90))[0]
+    assert NIK in text.replace(" ", "")
+
+
+def test_fallback_tokens_only_near_anchor(make_pdf, tmp_path):
+    text = ("PEMERINTAH KOTA CONTOH\n\n\n\n\n\n\n\n"
+            "Alamat Jl. Mawar Indah No. 5\nKota Contoh")
+    src = make_pdf(text)
+    s = text.index("Jl.")
+    f = Finding(Kind.ADDRESS, s, len(text), text[s:], "test")
+    out = tmp_path / "o.pdf"
+    redact_pdf(src, out, [[f]], Version.PUBLIK)
+    got = fitz.open(out)[0].get_text()
+    assert "PEMERINTAH KOTA CONTOH" in got
+    assert "Mawar" not in got and "Contoh" not in got.split("PEMERINTAH KOTA CONTOH")[1]
+
+
+def test_fallback_token_only_far_away_fails_closed(make_pdf, tmp_path):
+    text = "Kota Contoh\n\n\n\n\n\n\n\n\nJl. Mawar Indah No. 5"
+    src = make_pdf(text)
+    f = Finding(Kind.ADDRESS, 0, 10, "Jl. Mawar Indah No. 5\nKota Contoh", "test")
+    with pytest.raises(DocumentError):
+        redact_pdf(src, tmp_path / "o.pdf", [[f]], Version.PUBLIK)
+
+
+@needs_tess
+def test_letterhead_page_end_to_end(make_scanned_pdf, tmp_path):
+    text = ("PEMERINTAH KOTA CONTOH\nDINAS KOMUNIKASI\n"
+            "Jl. Merdeka No. 1 Telp (0548) 123 Kode Pos 75311\n\n"
+            "Nama : Budi Santoso\nAlamat : Jl. Mawar Indah No. 5")
+    src = make_scanned_pdf(text)
+    found = detect(extract_pdf_text(src)[0])
+    kinds = {f.kind for f in found}
+    assert Kind.NAME_CITIZEN in kinds and Kind.ADDRESS in kinds
+    assert not any("Merdeka" in f.text for f in found)
+    out = tmp_path / "o.pdf"
+    redact_pdf(src, out, [found], Version.PUBLIK)
+    got = "".join(extract_pdf_text(out))
+    assert "Merdeka" in got and "CONTOH" in got
+    assert "Santoso" not in got and "Mawar" not in got

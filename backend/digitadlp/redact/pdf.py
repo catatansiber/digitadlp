@@ -182,8 +182,64 @@ def _pil(page: fitz.Page) -> Image.Image:
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
 
+_TRANSPOSE = {90: Image.Transpose.ROTATE_90, 180: Image.Transpose.ROTATE_180,
+              270: Image.Transpose.ROTATE_270}
+OSD_MIN_CONF = 1.0
+_CONF_MIN = 60
+
+
+def _rotated(img: Image.Image, angle: int) -> Image.Image:
+    """img turned counter-clockwise by angle (0/90/180/270)"""
+    return img.transpose(_TRANSPOSE[angle]) if angle else img
+
+
+def _confident_words(img: Image.Image) -> int:
+    data = _tess("image_to_data", img, lang=OCR_LANG,
+                 output_type=pytesseract.Output.DICT)
+    return sum(1 for w, c in zip(data["text"], data["conf"])
+               if len(_norm(w)) >= 2 and float(c) >= _CONF_MIN)
+
+
+def _orientation(img: Image.Image) -> int:
+    """counter-clockwise turn (0/90/180/270) that makes img upright: tesseract
+    OSD, or, when OSD cannot decide (too little text), the turn with the most
+    confident OCR words"""
+    try:
+        osd = _tess("image_to_osd", img, output_type=pytesseract.Output.DICT)
+        rot = int(osd.get("rotate", 0)) % 360
+        if rot in (0, 90, 180, 270) and float(osd.get("orientation_conf", 0)) >= OSD_MIN_CONF:
+            # OSD "rotate" is clockwise; PIL turns counter-clockwise
+            return (360 - rot) % 360
+    except (DocumentError, ValueError, TypeError):
+        pass
+    scores = {a: _confident_words(_rotated(img, a)) for a in (0, 90, 180, 270)}
+    best = max(scores.values())
+    return 0 if scores[0] == best else max(scores, key=scores.get)
+
+
+def _upright(img: Image.Image) -> tuple[Image.Image, int]:
+    a = _orientation(img)
+    return _rotated(img, a), a
+
+
+def _unrotate_rect(r: fitz.Rect, angle: int, w: float, h: float) -> fitz.Rect:
+    """map a rect in an image turned counter-clockwise by angle back to the
+    original w x h image"""
+    def pt(u, v):
+        if angle == 90:
+            return w - v, u
+        if angle == 180:
+            return w - u, h - v
+        if angle == 270:
+            return v, h - u
+        return u, v
+    (x0, y0), (x1, y1) = pt(r.x0, r.y0), pt(r.x1, r.y1)
+    return fitz.Rect(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
+
 def _ocr_text(page: fitz.Page) -> str:
-    return _tess("image_to_string", _pil(page), lang=OCR_LANG)
+    img, _ = _upright(_pil(page))
+    return _tess("image_to_string", img, lang=OCR_LANG)
 
 
 def extract_pdf_text(path: Path) -> list[str]:
@@ -248,25 +304,41 @@ def _locate(page: fitz.Page, words, f: Finding) -> list[tuple[fitz.Rect, str]]:
     toks = [t for t in f.text.split() if _must_locate(t)]
     if not toks:
         return []
+    # Anchor on the first long token (else the first token); every other
+    # token is accepted only near an anchor hit (a few lines above/below,
+    # across the page width), never page-wide. An anchor hit whose
+    # surroundings miss any required token is dropped; none left -> fail.
     long_toks = [t for t in toks if len(_norm(t)) >= 3]
-    short_toks = [t for t in toks if len(_norm(t)) < 3]
-    for tok in long_toks:
-        hits = _token_hits(page, words, tok)
-        if not hits:
-            raise DocumentError(f"cannot locate part of {f.kind} finding")
-        out += hits
-    near = _vicinity([r for r, _ in out])
-    for tok in short_toks:
-        hits = _token_hits(page, words, tok)
-        if near is not None:
-            hits = [(r, t) for r, t in hits if fitz.Rect(r).intersects(near)]
-        if not hits:
-            raise DocumentError(f"cannot locate part of {f.kind} finding")
-        out += hits
+    anchor = (long_toks or toks)[0]
+    rest = list(toks)
+    rest.remove(anchor)
+    hits = {t: _token_hits(page, words, t) for t in dict.fromkeys(toks)}
+    for ar, _ in hits[anchor]:
+        near = _line_vicinity(ar)
+        group = [(ar, anchor)]
+        for tok in dict.fromkeys(rest):
+            th = [(r, t) for r, t in hits[tok] if fitz.Rect(r).intersects(near)]
+            if not th:
+                break
+            group += th
+        else:
+            out += [h for h in group if h not in out]
+    if not out:
+        raise DocumentError(f"cannot locate part of {f.kind} finding")
     return out
 
 
-def _words_from(img: Image.Image, dpi: int, offset=(0, 0)):
+def _line_vicinity(r) -> fitz.Rect:
+    r = fitz.Rect(r)
+    pad = 3 * r.height
+    return fitz.Rect(-1e6, r.y0 - pad, 1e6, r.y1 + pad)
+
+
+def _words_from(img: Image.Image, dpi: int, offset=(0, 0), orient: bool = False):
+    angle = 0
+    w0, h0 = img.size
+    if orient:
+        img, angle = _upright(img)
     data = _tess("image_to_data", img, lang=OCR_LANG,
                  output_type=pytesseract.Output.DICT)
     scale = 72 / dpi
@@ -277,13 +349,14 @@ def _words_from(img: Image.Image, dpi: int, offset=(0, 0)):
         if not n:
             continue
         x, y, ww, hh = (data[k][i] for k in ("left", "top", "width", "height"))
-        rect = fitz.Rect(x, y, x + ww, y + hh) * scale + (ox, oy, ox, oy)
+        rect = _unrotate_rect(fitz.Rect(x, y, x + ww, y + hh), angle, w0, h0)
+        rect = rect * scale + (ox, oy, ox, oy)
         words.append((n, rect))
     return words
 
 
 def _ocr_words(page: fitz.Page) -> list[tuple[str, fitz.Rect]]:
-    return _words_from(_pil(page), OCR_DPI)
+    return _words_from(_pil(page), OCR_DPI, orient=True)
 
 
 def _label(f: Finding, action: Action, tok: str) -> str:
@@ -358,16 +431,20 @@ def _reocr_page(doc: fitz.Document, idx: int) -> None:
     tessdata = _tessdata()
     page = doc[idx]
     rect = page.rect
-    pix = page.get_pixmap(dpi=OCR_DPI)
+    img, angle = _upright(_pil(page))
+    pix = fitz.Pixmap(fitz.csRGB, img.width, img.height, img.tobytes(), False)
+    pix.set_dpi(OCR_DPI, OCR_DPI)
     try:
         data = pix.pdfocr_tobytes(language=OCR_LANG, tessdata=tessdata)
     except _OCR_ERRORS as e:
         raise DocumentError(f"OCR failed: {e}") from e
     ocr = fitz.open("pdf", data)
+    # OCR ran on the upright image; /Rotate (clockwise) restores the look
+    ocr[0].set_rotation(angle)
     doc.delete_page(idx)
     doc.insert_pdf(ocr, start_at=idx)
     new = doc[idx]
-    if new.rect != rect:
+    if new.rect != rect and not angle:
         new.set_mediabox(fitz.Rect(0, 0, new.rect.width, new.rect.height))
     ocr.close()
 

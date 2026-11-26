@@ -131,3 +131,36 @@ def make_docx(tmp_path):
         return path
 
     return _make
+
+
+@pytest.fixture
+def make_rotated_scanned_pdf(tmp_path):
+    """Scan of a landscape page (text rendered by PyMuPDF, rasterised) whose
+    image is rotated by `angle` degrees (PIL, counter-clockwise) and placed
+    on a portrait A4 page, like a sideways-fed scanner."""
+    counter = {"n": 0}
+
+    def _make(text: str, angle: int = 90, dpi: int = 200) -> Path:
+        counter["n"] += 1
+        src = fitz.open()
+        page = src.new_page(width=842, height=595)
+        y = 80
+        for line in text.split("\n"):
+            page.insert_text((60, y), line, fontsize=14)
+            y += 26
+        pix = page.get_pixmap(dpi=dpi)
+        src.close()
+        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        img = img.rotate(angle, expand=True)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        path = tmp_path / f"rot{counter['n']}.pdf"
+        doc = fitz.open()
+        w, h = (595, 842) if angle in (90, 270) else (842, 595)
+        out = doc.new_page(width=w, height=h)
+        out.insert_image(out.rect, stream=buf.getvalue())
+        doc.save(path)
+        doc.close()
+        return path
+
+    return _make
