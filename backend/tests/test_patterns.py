@@ -211,3 +211,13 @@ def test_label_name_negatives():
     assert _names("Nama :\nNIK : 1") == []
     assert _names("Nama : :") == []
     assert _names("Dengan Nama : Budi") == []
+
+
+def test_letterhead_email_not_flagged():
+    text = "Email: dinas@contohkota.go.id Web: dinas.contohkota.go.id\nEmail : budi.santoso@mail.com"
+    emails = [f.text for f in find_patterns(text) if f.kind == Kind.EMAIL]
+    assert emails == ["budi.santoso@mail.com"]
+
+
+def test_personal_email_with_label_only_still_flagged():
+    assert [f.kind for f in find_patterns("E-mail: siti@contoh.id")] == [Kind.EMAIL]

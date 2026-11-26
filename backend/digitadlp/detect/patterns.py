@@ -78,6 +78,16 @@ def _institutional(text: str, start: int) -> bool:
     return bool(_INSTITUTIONAL.search(text, start, len(text) if eol < 0 else eol))
 
 
+# An e-mail on a letterhead line (next to Web/Telp/Fax) belongs to the office.
+_LETTERHEAD = re.compile(r"(?<![A-Za-z])(?:Telp|Telepon|Fax|Faks|Website|Web|Kode\s+Pos)(?![A-Za-z])", re.I)
+
+
+def _letterhead_line(text: str, pos: int) -> bool:
+    sol = text.rfind("\n", 0, pos) + 1
+    eol = text.find("\n", pos)
+    return bool(_LETTERHEAD.search(text, sol, len(text) if eol < 0 else eol))
+
+
 def _addresses(text: str) -> list[tuple[int, int]]:
     out: list[tuple[int, int]] = []
     for m in _STREET_CUE.finditer(text):
@@ -159,7 +169,8 @@ def _spans(pattern: re.Pattern, text: str, group: int = 0):
 def find_patterns(text: str) -> list[Finding]:
     # Candidates in priority order (email first); an earlier one wins any overlap.
     cands: list[tuple[Kind, int, int]] = []
-    cands += [(Kind.EMAIL, s, e) for s, e in _spans(_EMAIL, text)]
+    cands += [(Kind.EMAIL, s, e) for s, e in _spans(_EMAIL, text)
+              if not _letterhead_line(text, s)]
     cands += [(Kind.NIP, s, e) for s, e in _spans(_NIP, text, 1)]
     cands += [(Kind.NPWP, s, e) for s, e in _spans(_NPWP_FMT, text)]
     cands += [(Kind.NPWP, s, e) for s, e in _spans(_NPWP_16, text, 1)]
