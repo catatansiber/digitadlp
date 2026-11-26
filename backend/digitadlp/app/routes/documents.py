@@ -19,9 +19,9 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 MSG_NOT_FOUND = "Dokumen tidak ditemukan."
 
 
-def _load(db: Session, user: User, doc_id: str, allow_admin: bool = False) -> Document:
+def _load(db: Session, user: User, doc_id: str) -> Document:
     doc = db.get(Document, doc_id)
-    if doc is None or not (can_view(user, doc) or (allow_admin and user.role == Role.ADMIN)):
+    if doc is None or not can_view(user, doc):
         raise HTTPException(404, MSG_NOT_FOUND)
     return doc
 
@@ -90,7 +90,7 @@ def list_docs(status: str | None = None, mine: bool = False,
         q = q.where(Document.status == Status(status))
     if mine:
         q = q.where(Document.owner_id == user.id)
-    else:
+    elif user.role != Role.ADMIN:
         q = q.where(or_(Document.owner_id == user.id, Document.unit_id == user.unit_id))
     return [
         {"id": d.id, "title": d.title, "ext": d.ext, "status": d.status.value,
@@ -205,5 +205,5 @@ async def post_reupload(doc_id: str, request: Request, file: UploadFile = File(.
 @router.post("/{doc_id}/release")
 def post_release(doc_id: str, user: User = Depends(current_user),
                  db: Session = Depends(get_db)):
-    doc = _load(db, user, doc_id, allow_admin=True)
+    doc = _load(db, user, doc_id)
     return _out(_run(workflow.release, db, user, doc), db)

@@ -143,21 +143,13 @@ def test_purge_tmp_older_than(store, tmp_path):
     assert not old.exists() and new.exists()
 
 
-def test_blob_roundtrip_encrypted(store):
-    assert store.get_blob("employees.xlsx") is None
-    store.put_blob("employees.xlsx", b"PK isi " + NIK)
-    raw = (store.root / "_config" / "employees.xlsx.enc").read_bytes()
-    assert NIK not in raw
-    assert store.get_blob("employees.xlsx") == b"PK isi " + NIK
-
-
-@pytest.mark.parametrize("name", ["../employees.xlsx", "x.xlsx", "employees.xlsx/..", "", None,
-                                  "source.pdf"])
-def test_blob_name_restricted(store, name):
-    with pytest.raises(ValueError):
-        store.put_blob(name, b"x")
-    with pytest.raises(ValueError):
-        store.get_blob(name)
+def test_legacy_blob_deleted_on_init(tmp_path, store):
+    legacy = store.root / "_config" / "employees.xlsx.enc"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_bytes(b"lama")
+    store.delete_legacy_blobs()
+    assert not legacy.exists()
+    store.delete_legacy_blobs()  # idempoten
 
 
 def test_delete_source(store):

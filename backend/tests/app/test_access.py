@@ -139,7 +139,7 @@ def test_list_filters(client_as, work, make_pdf, wapp):
     assert len(mate.get("/api/documents").json()) == 1
     assert mate.get("/api/documents?mine=true").json() == []
     assert client_as("pengguna", unit="Unit C").get("/api/documents").json() == []
-    assert client_as("admin", unit="Unit C").get("/api/documents").json() == []
+    assert client_as("admin", unit="Unit C").get("/api/documents").json()  # admin lihat semua
     assert client_as("admin", unit="Unit A").get("/api/documents").json()
 
 

@@ -275,10 +275,10 @@ def test_reupload_other_ext_deletes_old_source(client_as, work, make_pdf, make_d
     assert not store.exists(doc_id, "source.pdf")
 
 
-def test_admin_other_unit_list_hides_doc(client_as, work, make_pdf):
+def test_admin_other_unit_list_shows_doc(client_as, work, make_pdf):
     up, doc_id = _ready(client_as, work, make_pdf)
     admin_other = client_as("admin", unit="Unit Z")
-    assert doc_id not in [x["id"] for x in admin_other.get("/api/documents").json()]
+    assert doc_id in [x["id"] for x in admin_other.get("/api/documents").json()]
     admin_same = client_as("admin", unit="Unit A")
     assert doc_id in [x["id"] for x in admin_same.get("/api/documents").json()]
     stranger = client_as("pengguna", unit="Unit Z")

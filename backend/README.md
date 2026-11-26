@@ -93,7 +93,7 @@ Semua endpoint butuh login (cookie sesi dari `POST /api/auth/login`), kecuali lo
 
 - `POST /api/auth/login`, `POST /auth/logout`, `GET /auth/me`
 - `POST /api/documents` (multipart `file`, PDF/DOCX, maks. 50 MB), `GET /documents`, `GET /documents/{id}`
-- `PUT /api/documents/{id}/label`, `POST /documents/{id}/corrections`, `/approve`, `/return`, `/reupload`, `/release`
+- `PUT /api/documents/{id}/label`, `POST /documents/{id}/corrections`, `/approve`, `/reupload`, `/release`
 - `GET /api/documents/{id}/versions/{publik|internal|rahasia}`
 - `GET /api/documents/{id}/text` (teks sumber per halaman; hak akses sama dengan melihat temuan, diaudit)
 - Admin: `GET/POST /api/admin/units`, `GET/POST /admin/users`, `PATCH /admin/users/{id}`, `GET/PUT /admin/label-rules`, `GET /admin/audit?document_id=&actor_id=&limit=100` (maks. 500, terbaru dulu)

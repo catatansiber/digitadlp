@@ -123,6 +123,18 @@ test("release shown for admin", async () => {
   expect(screen.getByRole("button", { name: "Rilis versi Publik" })).toBeInTheDocument();
 });
 
+test("release shown for admin of another unit (metadata only, rahasia denied)", async () => {
+  doc = { ...doc, unit_id: "u-lain", unit_name: "Dinas Lain", owner_name: "Budi" };
+  versionReply = (v) =>
+    (v === "rahasia"
+      ? HttpResponse.json({ detail: "Anda tidak punya akses ke versi ini." }, { status: 403 })
+      : okBlob(v)) as unknown as Response;
+  await open(adminU);
+  await userEvent.click(screen.getByRole("button", { name: "Rilis versi Publik" }));
+  await userEvent.click(screen.getByRole("button", { name: "Ya, rilis" }));
+  await waitFor(() => expect(releases).toBe(1));
+});
+
 test("versions: owner can release; unit mate cannot", async () => {
   await open(uploader);
   expect(screen.getByRole("button", { name: "Rilis versi Publik" })).toBeInTheDocument();

@@ -85,3 +85,10 @@ def test_corrected_detect_fn_merge_keeps_stronger_kind():
     fn = corrected_detect_fn(base, [C(CorrectionOp.TAMBAH, "6474015203880002")])
     out = fn("x 6474015203880002 y")
     assert len(out) == 1 and out[0].kind == Kind.NIK
+
+
+def test_corrected_detect_fn_matches_across_whitespace():
+    fn = corrected_detect_fn(lambda t: [], [C(CorrectionOp.TAMBAH, "Siti Rahmawati")])
+    out = fn("oleh siti\nRahmawati  dan Siti \t RAHMAWATI")
+    assert [(f.start, f.end, f.text) for f in out] == [
+        (5, 19, "siti\nRahmawati"), (25, 41, "Siti \t RAHMAWATI")]

@@ -60,6 +60,14 @@ Catatan:
 
 - Aplikasi hanya bisa dibuka dari komputer ini, karena port terikat ke `127.0.0.1`. Untuk dibuka dari jaringan kantor, ubah `ports` di `docker-compose.yml`, pasang HTTPS (misalnya lewat reverse proxy), lalu set `DIGITADLP_COOKIE_SECURE=true`.
 
+## Upgrade dari versi sebelumnya
+
+- Peran lama (selain Admin) otomatis menjadi **Pengguna**; migrasi database berjalan saat aplikasi dimulai.
+- Dokumen berstatus *dikembalikan* otomatis menjadi **Menunggu cek**.
+- Pengaturan `DIGITADLP_NER*` dan pengaturan model lain di `.env` yang sudah ada diabaikan dan boleh dihapus.
+- File daftar pegawai lama (terenkripsi) dihapus otomatis saat aplikasi dimulai.
+- Bangun ulang dan jalankan dengan `docker compose up -d --build`.
+
 ## Build antarmuka web
 
 Di mesin build (butuh Node.js 20+):
