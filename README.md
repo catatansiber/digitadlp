@@ -1,6 +1,6 @@
 # DigitaDLP
 
-DigitaDLP membantu instansi pemerintahan menemukan dan menyensor data pribadi (NIK, NIP, nama, nomor rekening, dan lain-lain) pada dokumen PDF dan DOCX sebelum dokumen dibagikan. Setiap dokumen yang disetujui Pemeriksa menghasilkan tiga versi: **Publik**, **Internal**, dan **Rahasia**. Semua pemrosesan berjalan di server instansi, tanpa layanan luar.
+DigitaDLP membantu instansi pemerintahan menemukan dan menyensor data pribadi (NIK, NIP, nomor rekening, alamat, dan lain-lain; nama orang ditandai manual oleh pemilik dokumen) pada dokumen PDF dan DOCX sebelum dokumen dibagikan. Setiap dokumen yang dibuatkan versinya oleh pemiliknya menghasilkan tiga versi: **Publik**, **Internal**, dan **Rahasia**. Semua pemrosesan berjalan di server instansi, tanpa layanan luar.
 
 ## Isi repo
 
@@ -29,7 +29,7 @@ Yang dibutuhkan: [Docker Desktop](https://www.docker.com/products/docker-desktop
    docker compose up -d --build
    ```
 
-   Build pertama memakan waktu sekitar 10–20 menit. Prosesnya mengunduh tampilan web, OCR bahasa Indonesia, PyTorch versi CPU, dan model IndoBERT (±440 MB). Hasilnya image sekitar 3 GB.
+   Build pertama memakan waktu beberapa menit. Prosesnya mengunduh tampilan web dan OCR bahasa Indonesia. Tidak ada model AI yang diunduh.
 
 3. Buka **http://localhost:8000**, lalu masuk dengan `admin` dan kata sandi dari `.env`. Setelah itu, buat unit kerja dan pengguna di menu **Admin**.
 
@@ -59,7 +59,6 @@ docker compose down
 Catatan:
 
 - Aplikasi hanya bisa dibuka dari komputer ini, karena port terikat ke `127.0.0.1`. Untuk dibuka dari jaringan kantor, ubah `ports` di `docker-compose.yml`, pasang HTTPS (misalnya lewat reverse proxy), lalu set `DIGITADLP_COOKIE_SECURE=true`.
-- Model NER lain bisa dipakai lewat `docker compose build --build-arg NER_MODEL=<nama-model-huggingface>`.
 
 ## Build antarmuka web
 
@@ -81,7 +80,6 @@ cd backend
 export DIGITADLP_FERNET_KEY=...
 export DIGITADLP_DATABASE_URL=postgresql+psycopg://digitadlp:SANDI@127.0.0.1/digitadlp
 export DIGITADLP_STORAGE=/var/lib/digitadlp
-export DIGITADLP_NER_PATH=/opt/digitadlp/models/indobert-ner
 export DIGITADLP_FRONTEND_DIR=/opt/digitadlp/dist    # folder hasil build frontend
 python -m digitadlp    # satu proses (--workers 1); host/port: DIGITADLP_HOST, DIGITADLP_PORT
 ```
@@ -90,7 +88,7 @@ Antarmuka tersedia di `/`, API di `/api`. Jalankan tepat **satu** proses aplikas
 
 ## Mode pengembangan
 
-Jalankan backend di port 8000 (mis. `DIGITADLP_COOKIE_SECURE=false DIGITADLP_NER=fake python -m digitadlp`), lalu:
+Jalankan backend di port 8000 (mis. `DIGITADLP_COOKIE_SECURE=false python -m digitadlp`), lalu:
 
 ```bash
 cd frontend
@@ -108,4 +106,4 @@ cd frontend && npx tsc --noEmit            # cek tipe
 cd frontend && npm run e2e                 # build + Playwright (trace mati)
 ```
 
-Tes e2e (`frontend/e2e/flow.spec.ts`) menjalankan `frontend/e2e/start-backend.sh`: backend dengan SQLite dan storage di folder sementara, `DIGITADLP_NER=fake`, kunci Fernet baru, di port 8765. Skenario: Admin membuat unit dan pengguna, Pengunggah meng-upload PDF ber-NIK, Pemeriksa menyetujui, versi Publik yang diunduh dipastikan tanpa NIK, dokumen dirilis, lalu aksi unduh terlihat di Audit. Screenshot disimpan di `frontend/test-results/` (tidak di-commit). Butuh `backend/.venv` yang sudah terpasang dan browser Chromium untuk Playwright (`npx playwright install chromium` bila belum ada).
+Tes e2e (`frontend/e2e/flow.spec.ts`) menjalankan `frontend/e2e/start-backend.sh`: backend dengan SQLite dan storage di folder sementara, kunci Fernet baru, di port 8765. Skenario: Admin membuat unit dan satu Pengguna, Pengguna mengunggah PDF ber-NIK dan bernama "Siti Rahmawati", menandai nama itu secara manual, memilih Buat versi, versi Publik yang diunduh dipastikan tanpa NIK dan tanpa nama, dokumen dirilis, lalu aksi unduh terlihat di Audit. Screenshot disimpan di `frontend/test-results/` (tidak di-commit). Butuh `backend/.venv` yang sudah terpasang dan browser Chromium untuk Playwright (`npx playwright install chromium` bila belum ada).

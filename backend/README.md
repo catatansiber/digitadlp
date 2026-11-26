@@ -1,6 +1,6 @@
 # DigitaDLP Backend (Engine Deteksi dan Sensor)
 
-Mesin Python yang menemukan dan menyensor data pribadi (NIK, NIP, nama pegawai, dll.) pada dokumen PDF dan DOCX pemerintahan, lalu menghasilkan tiga versi: `publik`, `internal`, `rahasia`.
+Mesin Python yang menemukan dan menyensor data pribadi (NIK, NIP, nomor rekening, alamat, dll.) pada dokumen PDF dan DOCX pemerintahan, lalu menghasilkan tiga versi: `publik`, `internal`, `rahasia`.
 
 ## Persyaratan
 
@@ -14,54 +14,30 @@ Mesin Python yang menemukan dan menyensor data pribadi (NIK, NIP, nama pegawai, 
 ```bash
 cd backend
 python -m venv .venv && source .venv/bin/activate
-pip install -e .[ner]      # tambahkan ,dev untuk pytest: pip install -e .[ner,dev]
+pip install -e .          # tambahkan [dev] untuk pytest: pip install -e .[dev]
 ```
 
-## Model IndoBERT NER (sekali unduh)
+## Deteksi nama dan alamat
 
-Deteksi nama orang memakai model token-classification bahasa Indonesia yang disimpan di folder lokal (server tidak mengunduh apa pun saat berjalan). Pada mesin yang punya internet:
+Nama orang **tidak dideteksi otomatis**. Pemilik dokumen menandai nama yang perlu disensor lewat "Tandai manual" (jenis "Nama orang"); semua kemunculan teks yang sama ikut tersensor. Data pribadi berpola (NIK, NIP, nomor rekening, telepon, email, dan sejenisnya) tetap dideteksi otomatis.
 
-```bash
-pip install huggingface_hub
-huggingface-cli download cahya/bert-base-indonesian-NER --local-dir ./models/indobert-ner
-```
+Alamat dideteksi dari kata penanda. Aplikasi mengenali Jl., Jalan, Gg., Gang, Perumahan, Perum, Komplek, Blok, RT, RW, No., dan Nomor, serta kelurahan atau desa yang langsung mengikuti alamat tersebut.
 
-lalu salin folder itu ke server. Model harus berupa model *token classification* bahasa Indonesia dengan label entitas orang (PER). Pasang dependensinya dengan `pip install -e .[ner]` (untuk CPU, `torch` bisa dipasang dari `https://download.pytorch.org/whl/cpu`).
-
-### Hasil uji `cahya/bert-base-indonesian-NER` (25 November 2026)
-
-Diuji dengan `python scripts/eval_ner.py ./models/indobert-ner` pada 15 kalimat contoh bergaya dokumen pemerintah (data fiktif):
-
-| Ukuran | Hasil |
-|---|---|
-| Nama warga terdeteksi | 14 dari 14 |
-| Alamat rumah terdeteksi | 5 dari 5 |
-| Salah tandai sebagai nama | 0 |
-| Waktu muat model | ±4 detik |
-| Kecepatan (CPU) | ±36 ms per kalimat |
-
-Aturan yang diterapkan pada keluaran model:
-
-- Tempat (LOC, GPE, FAC) disensor sebagai alamat hanya jika memuat penanda alamat rumah: Jl., Jln, Jalan, Gg., Gang, Perumahan, Perum, Komplek, Blok, RT, RW, No., atau Nomor.
-- Kelurahan atau desa ikut disensor jika letaknya langsung setelah alamat rumah (hanya dipisah spasi atau koma).
-- Nama kota, nama kelurahan yang berdiri sendiri, dan gedung umum tidak disensor.
-- Sapaan yang berdiri sendiri (Ibu, Bapak, Sdr., Yth., dan sejenisnya) tidak dianggap nama.
-
-Lima belas kalimat terlalu sedikit untuk jaminan. Sebelum dipakai, jalankan skrip yang sama pada contoh dokumen asli instansi. Pemeriksa tetap wajib mengecek setiap dokumen sebelum rilis.
+Keterbatasan: alamat yang ditulis **tanpa kata penanda** (misalnya hanya nama kampung atau nama kompleks tanpa "Jl.", "Blok", atau "RT") tidak terdeteksi. Pemilik perlu menandainya secara manual.
 
 ## Basis data (PostgreSQL) dan migrasi
 
 Produksi memakai PostgreSQL (SQLite hanya untuk dev/tes):
 
 ```bash
-pip install -e .[ner,postgres]
+pip install -e .[postgres]
 export DIGITADLP_DATABASE_URL=postgresql+psycopg://digitadlp:SANDI@127.0.0.1/digitadlp
 alembic upgrade head          # jalankan dari folder backend/, juga setiap kali update
 ```
 
 ## Kunci enkripsi file
 
-File sumber, ketiga versi, dan daftar pegawai disimpan terenkripsi (Fernet). Buat kunci sekali:
+File sumber dan ketiga versi disimpan terenkripsi (Fernet). Buat kunci sekali:
 
 ```bash
 python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"
@@ -78,7 +54,7 @@ export DIGITADLP_FERNET_KEY=...hasil di atas...
 python -m digitadlp.app create-admin --username admin --unit "Sekretariat"
 ```
 
-Kata sandi diminta dua kali di terminal. Pengguna lain, unit kerja, daftar pegawai, dan aturan label dikelola Admin lewat `/api/admin/...`.
+Kata sandi diminta dua kali di terminal. Pengguna lain, unit kerja, dan aturan label dikelola Admin lewat `/api/admin/...`.
 
 ## Variabel lingkungan
 
@@ -86,16 +62,12 @@ Kata sandi diminta dua kali di terminal. Pengguna lain, unit kerja, daftar pegaw
 |---|---|
 | `DIGITADLP_FERNET_KEY` | Wajib. Kunci Fernet (lihat di atas). |
 | `DIGITADLP_DATABASE_URL` | Default `sqlite:///./digitadlp.db`. Produksi: PostgreSQL. |
-| `DIGITADLP_NER_PATH` | Wajib di produksi. Folder model IndoBERT NER. |
 | `DIGITADLP_STORAGE` | Folder penyimpanan terenkripsi. Default `./storage`. |
 | `DIGITADLP_SESSION_HOURS` | Lama sesi login. Default 8. |
 | `DIGITADLP_COOKIE_SECURE` | Default `1` (cookie hanya lewat HTTPS). Set `0` hanya untuk dev lewat http. |
 | `DIGITADLP_RUN_WORKER` | Default `1`: worker pemrosesan berjalan di dalam proses aplikasi. |
 | `DIGITADLP_FRONTEND_DIR` | Folder hasil build antarmuka web (default `frontend/dist` di repo bila ada). Disajikan di `/`; API di `/api`. |
 | `DIGITADLP_JOB_STALE_MINUTES` | Job berjalan tanpa heartbeat selama ini diambil ulang. Default 30. |
-| `DIGITADLP_NER=fake` | **Hanya dev/test**: NER palsu tanpa model, nama orang tidak terdeteksi. Jangan dipakai di produksi. |
-
-Daftar pegawai tidak lagi dibaca dari variabel lingkungan: Admin mengunggahnya lewat `POST /api/admin/employees` (xlsx, kolom `Nama` dan opsional `NIP`). File disimpan terenkripsi di `storage/_config/` dan dimuat lagi saat aplikasi mulai.
 
 ## Menjalankan
 
@@ -107,7 +79,6 @@ python -m digitadlp
 **Jalankan tepat satu proses aplikasi** (`--workers 1`, jangan `gunicorn -w N`). Alasannya:
 
 - Worker pemrosesan dokumen berjalan sebagai thread di dalam proses aplikasi.
-- Daftar pegawai yang diimpor Admin dimuat ulang di memori proses yang menerima permintaan itu saja; proses lain tetap memakai daftar lama sampai restart.
 - Pembatas percobaan login juga disimpan di memori proses.
 
 Letakkan reverse proxy HTTPS (mis. nginx) di depan `127.0.0.1:8000`.
@@ -125,7 +96,7 @@ Semua endpoint butuh login (cookie sesi dari `POST /api/auth/login`), kecuali lo
 - `PUT /api/documents/{id}/label`, `POST /documents/{id}/corrections`, `/approve`, `/return`, `/reupload`, `/release`
 - `GET /api/documents/{id}/versions/{publik|internal|rahasia}`
 - `GET /api/documents/{id}/text` (teks sumber per halaman; hak akses sama dengan melihat temuan, diaudit)
-- Admin: `GET/POST /api/admin/units`, `GET/POST /admin/users`, `PATCH /admin/users/{id}`, `POST /admin/employees`, `GET/PUT /admin/label-rules`, `GET /admin/audit?document_id=&actor_id=&limit=100` (maks. 500, terbaru dulu)
+- Admin: `GET/POST /api/admin/units`, `GET/POST /admin/users`, `PATCH /admin/users/{id}`, `GET/PUT /admin/label-rules`, `GET /admin/audit?document_id=&actor_id=&limit=100` (maks. 500, terbaru dulu)
 
 ## Tes
 
