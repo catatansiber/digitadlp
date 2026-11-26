@@ -23,7 +23,7 @@ function makePdf(): string {
 d = fitz.open(); p = d.new_page()
 p.insert_text((72, 100), "Surat Keterangan Domisili", fontsize=14)
 p.insert_text((72, 140), "NIK ${NIK}", fontsize=11)
-p.insert_text((72, 160), "Nama: ${NAMA}", fontsize=11)
+p.insert_text((72, 160), "Diajukan oleh ${NAMA}", fontsize=11)
 d.save(sys.argv[1])`,
     out,
   );
@@ -129,6 +129,43 @@ test("alur lengkap: admin, unggah, tandai nama, buat versi, unduh, rilis, audit"
   await expect(page.getByRole("cell", { name: "Unduh versi" }).first()).toBeVisible();
   await expect(page.getByRole("cell", { name: "Rilis versi Publik" })).toBeVisible();
   await shot(page, "05-admin-audit");
+});
+
+test("sensor area: kotak digambar di atas nama, Publik bersih, Rahasia utuh", async ({ page }) => {
+  await login(page, "rina", "sandi-e2e-123");
+  await page.goto("/upload");
+  await page.locator('input[type="file"]').setInputFiles(makePdf());
+  await expect(page).toHaveURL(/\/dokumen\/[^/]+$/);
+  await expect(page.getByText("Menunggu cek")).toBeVisible({ timeout: 60_000 });
+  // Nama tidak ditandai sebagai temuan; hanya area yang menutupnya.
+  await page.getByRole("tab", { name: "Halaman" }).click();
+  const img = page.getByRole("img", { name: "Halaman 1" });
+  await expect(img).toBeVisible();
+  await expect.poll(() => img.evaluate((e: HTMLImageElement) => e.complete && e.naturalWidth > 0)).toBe(true);
+  const bb = (await img.boundingBox())!;
+  // Fixture A4 (595x842 pt): nama pada baseline y=160, x mulai 72, ukuran 11.
+  const fx = (x: number) => bb.x + (x / 595) * bb.width;
+  const fy = (y: number) => bb.y + (y / 842) * bb.height;
+  await page.mouse.move(fx(60), fy(148));
+  await page.mouse.down();
+  await page.mouse.move(fx(130), fy(158), { steps: 5 });
+  await page.mouse.move(fx(200), fy(166), { steps: 5 });
+  await page.mouse.up();
+  await expect(page.getByText("Area 1 · Halaman 1")).toBeVisible();
+  await expect(page.locator(".area-box")).toHaveCount(1);
+  await shot(page, "06-halaman-area");
+  await page.getByRole("tab", { name: "Teks" }).click();
+
+  await page.getByRole("button", { name: "Buat versi" }).click();
+  await expect(page.locator(".chip", { hasText: "Disetujui" }).first()).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("link", { name: "Lihat tiga versi" }).click();
+  await expect(page.getByRole("heading", { name: "Tiga versi" })).toBeVisible();
+  const publik = pdfText(await download(page, "Publik"));
+  const rahasia = pdfText(await download(page, "Rahasia"));
+  expect(rahasia).toContain(NAMA);
+  expect(publik).not.toContain("Rahmawati");
+  expect(publik).not.toContain(NIK);
+  expect(publik).toContain("Surat Keterangan");
 });
 
 test("layar ponsel 400px tanpa gulir horizontal", async ({ page }) => {
