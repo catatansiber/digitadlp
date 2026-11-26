@@ -48,6 +48,7 @@ COPY --from=model /model /app/model
 
 RUN useradd --system --uid 10001 --home /data digitadlp \
  && mkdir -p /data && chown digitadlp /data \
+ && sed -i 's/\r$//' /app/docker/entrypoint.sh /app/docker/bootstrap.py \
  && chmod +x /app/docker/entrypoint.sh
 
 ENV DIGITADLP_HOST=0.0.0.0 \
