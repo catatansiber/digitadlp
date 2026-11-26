@@ -15,9 +15,11 @@ _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 _KK_CONTEXT = re.compile(r"\bKK\b|Kartu\s+Keluarga", re.I)
 
 # Addresses start at a street/housing cue; a kelurahan/desa counts only right after one.
+# Abbreviations always count; full words only when the next token starts with
+# an uppercase letter or digit ("jalan sehat" is not an address).
 _STREET_CUE = re.compile(
-    r"(?<![\w-])(?:Jl\.|Jln\.?|Jalan|Gg\.|Gang|Perumahan|Perum|Komplek|Kompleks|Blok)(?![\w-])",
-    re.I,
+    r"(?<![\w-])(?:(?i:Jl\.|Jln\.?|Gg\.|Perum)(?![\w-])"
+    r"|(?i:Jalan|Gang|Perumahan|Kompleks|Komplek|Blok)(?![\w-])(?=\s+[A-Z0-9]))"
 )
 _AREA_CUE = re.compile(r"(?:Kelurahan|Kel\.|Desa)(?![\w-])", re.I)
 _KEEP_AFTER_COMMA = re.compile(r"\s*(?:RT|RW|No|Nomor|Blok)(?![A-Za-z])", re.I)
@@ -36,7 +38,8 @@ def _address_end(text: str, start: int) -> int:
         if c == ".":
             rest = text[i + 1:]
             word = re.search(r"(\w+)$", text[start:i])
-            initial = word is not None and len(word.group(1)) == 1 and word.group(1).isupper()
+            w = word.group(1) if word else ""
+            initial = (len(w) == 1 and w.isupper()) or w.lower() in ("no", "nomor")
             if not rest.strip() or (re.match(r"\s+[A-Z]", rest) and not initial):
                 break
         if i > start and text[i - 1].isspace() and _AREA_CUE.match(text, i):

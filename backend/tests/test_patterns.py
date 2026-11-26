@@ -114,3 +114,17 @@ def test_address_patterns(text, addr):
 ])
 def test_not_address(text):
     assert not [f for f in find_patterns(text) if f.kind == Kind.ADDRESS]
+
+
+@pytest.mark.parametrize("text", ["lampu jalan rusak dan jalan sehat", "masuk gang sempit", "blok kiri"])
+def test_lowercase_full_cue_not_address(text):
+    assert not [f for f in find_patterns(text) if f.kind == Kind.ADDRESS]
+
+
+@pytest.mark.parametrize("text,addr", [
+    ("Jalan Mulawarman Nomor 21", "Jalan Mulawarman Nomor 21"),
+    ("alamat Jl. Pupuk No. A5, Bontang", "Jl. Pupuk No. A5"),
+    ("alamat Jl. Pupuk Nomor. B7 Bontang", "Jl. Pupuk Nomor. B7 Bontang"),
+])
+def test_address_kept_whole(text, addr):
+    assert [f.text for f in find_patterns(text) if f.kind == Kind.ADDRESS] == [addr]
