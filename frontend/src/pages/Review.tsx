@@ -7,6 +7,7 @@ import { useAuth } from "../auth/AuthProvider";
 import { Button } from "../components/Button";
 import { DocText } from "../components/DocText";
 import { FindingList, type Finding } from "../components/FindingList";
+import { PageAreas } from "../components/PageAreas";
 import { LabelChip, StatusChip } from "../components/StatusChip";
 import { Toast } from "../components/Toast";
 import { STRONG_KINDS } from "../lib/highlight";
@@ -82,6 +83,7 @@ export function Review() {
     page: string;
   } | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [tab, setTab] = useState<"teks" | "halaman">("teks");
 
   const q = useQuery({
     queryKey: ["document", id],
@@ -230,7 +232,44 @@ export function Review() {
         </Link>
       )}
 
-      {allowed && (
+      {allowed && !isDocx && (
+        <div className="seg" role="tablist" aria-label="Tampilan dokumen">
+          <button
+            type="button"
+            role="tab"
+            id="tab-teks"
+            aria-selected={tab === "teks"}
+            aria-controls="panel-dok"
+            className={tab === "teks" ? "active" : undefined}
+            onClick={() => setTab("teks")}
+          >
+            Teks
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="tab-halaman"
+            aria-selected={tab === "halaman"}
+            aria-controls="panel-dok"
+            className={tab === "halaman" ? "active" : undefined}
+            onClick={() => setTab("halaman")}
+          >
+            Halaman
+          </button>
+        </div>
+      )}
+      {allowed && !isDocx && tab === "halaman" && (
+        <div role="tabpanel" id="panel-dok" aria-labelledby="tab-halaman">
+          <PageAreas
+            docId={doc.id}
+            ext={doc.ext}
+            pageCount={pageCount}
+            canEdit={canEdit}
+            status={doc.status}
+          />
+        </div>
+      )}
+      {allowed && (isDocx || tab === "teks") && (
         <div className="split">
           {t.data ? (
             <DocText pages={t.data.pages} marks={findings} />
