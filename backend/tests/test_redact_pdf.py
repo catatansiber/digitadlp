@@ -1,22 +1,28 @@
+import re
 import shutil
 
 import pymupdf as fitz
 import pytest
 
-from digitadlp.detect.employees import EmployeeDirectory
-from digitadlp.detect.ner import FakeNer
 from digitadlp.detect.pipeline import detect
-from digitadlp.models import Kind, Version
+from digitadlp.models import Finding, Kind, Version
 from digitadlp.redact.pdf import DocumentError, extract_pdf_text, redact_pdf
 
 NIK = "6474015203880002"
 TEXT = f"Nama Siti Rahmawati NIK {NIK}"
 
 
+def with_names(text, names):
+    """detect(text) plus manual NAME_CITIZEN findings for every occurrence of names."""
+    found = list(detect(text))
+    for n in names:
+        for m in re.finditer(re.escape(n), text):
+            found.append(Finding(Kind.NAME_CITIZEN, m.start(), m.end(), n, "manual"))
+    return sorted(found, key=lambda f: f.start)
+
+
 def _findings(pages):
-    ner = FakeNer({"Siti Rahmawati": Kind.NAME_CITIZEN})
-    directory = EmployeeDirectory.from_names([])
-    return [detect(p, ner, directory) for p in pages]
+    return [with_names(p, ["Siti Rahmawati"]) for p in pages]
 
 
 def _run(src, tmp_path, version):
@@ -361,9 +367,7 @@ def test_word_equal_to_a_placeholder_is_not_a_false_leak(make_pdf, tmp_path):
     # Real IndoBERT tagged the label word "NIK" as a person name; its
     # replacement must not be mistaken for a leak because "[NIK]" contains it.
     src = make_pdf(TEXT)
-    ner = FakeNer({"Siti Rahmawati": Kind.NAME_CITIZEN, "NIK": Kind.NAME_CITIZEN})
-    directory = EmployeeDirectory.from_names([])
-    pages = [detect(p, ner, directory) for p in extract_pdf_text(src)]
+    pages = [with_names(p, ["Siti Rahmawati", "NIK"]) for p in extract_pdf_text(src)]
     out = tmp_path / "out.pdf"
     redact_pdf(src, out, pages, Version.PUBLIK)
     text = fitz.open(out)[0].get_text()

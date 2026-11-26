@@ -1,25 +1,17 @@
 from dataclasses import replace
 
-from digitadlp.detect.employees import EmployeeDirectory
-from digitadlp.detect.ner import NerDetector
 from digitadlp.detect.patterns import find_patterns
-from digitadlp.models import Finding, Kind, Strength
+from digitadlp.models import Finding, Strength
 
 _RANK = {Strength.STRONG: 2, Strength.MEDIUM: 1, Strength.EMPLOYEE: 0}
-
-
-def _promote(f: Finding, directory: EmployeeDirectory) -> Finding:
-    if f.kind == Kind.NAME_CITIZEN and directory.is_employee(f.text):
-        return replace(f, kind=Kind.NAME_EMPLOYEE)
-    return f
 
 
 def _span(f: Finding, start: int, end: int, text: str) -> Finding:
     return replace(f, start=start, end=end, text=text[start:end])
 
 
-def detect(text: str, ner: NerDetector, directory: EmployeeDirectory) -> list[Finding]:
-    candidates = [_promote(f, directory) for f in [*find_patterns(text), *ner.find(text)]]
+def detect(text: str) -> list[Finding]:
+    candidates = find_patterns(text)
     candidates.sort(key=lambda f: (-_RANK[f.strength], -(f.end - f.start), f.start))
     accepted: list[Finding] = []
     dropped: list[Finding] = []

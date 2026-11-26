@@ -87,3 +87,30 @@ def test_email_with_phone_like_local_part():
 def test_nip_without_separator():
     f = find_patterns("NIP197004121998031005")
     assert [(x.kind, x.text) for x in f] == [(Kind.NIP, "197004121998031005")]
+
+
+import pytest
+
+
+@pytest.mark.parametrize("text,addr", [
+    ("alamat Jl. Pupuk Raya RT 12 No. 8, Kelurahan Gunung Elai.",
+     ["Jl. Pupuk Raya RT 12 No. 8", "Kelurahan Gunung Elai"]),
+    ("tinggal di Jalan Mulawarman Nomor 21 Bontang.", ["Jalan Mulawarman Nomor 21 Bontang"]),
+    ("warga Perumahan Bukit Sekatup Damai Blok C2, mengajukan",
+     ["Perumahan Bukit Sekatup Damai Blok C2"]),
+    ("di Gang Kenari II RT 05 Kelurahan Api-Api.", ["Gang Kenari II RT 05", "Kelurahan Api-Api"]),
+    ("terletak di Jl. KS Tubun, Kelurahan Bontang Baru.", ["Jl. KS Tubun", "Kelurahan Bontang Baru"]),
+])
+def test_address_patterns(text, addr):
+    found = [f for f in find_patterns(text) if f.kind == Kind.ADDRESS]
+    assert all(f.source == "regex" for f in found)
+    for a in addr:
+        assert any(a in f.text for f in found), (a, [f.text for f in found])
+
+
+@pytest.mark.parametrize("text", [
+    "Rapat di Kota Bontang.", "di Gedung Auditorium Taman 3 Dimensi",
+    "Kantor di Kelurahan Api-Api.", "Jalan-jalan sore",
+])
+def test_not_address(text):
+    assert not [f for f in find_patterns(text) if f.kind == Kind.ADDRESS]

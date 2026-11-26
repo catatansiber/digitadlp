@@ -5,8 +5,6 @@ import zipfile
 import pytest
 from PIL import Image
 
-from digitadlp.detect.employees import EmployeeDirectory
-from digitadlp.detect.ner import FakeNer
 from digitadlp.detect.pipeline import detect
 from digitadlp.models import Finding, Kind, Version
 from digitadlp.redact import docx as docxmod
@@ -18,9 +16,17 @@ from .conftest import DOCX_NIK
 NIKS = [DOCX_NIK] + [f"32010101010100{i:02d}" for i in range(1, 12)]
 
 
+def with_names(text, names):
+    """detect(text) plus manual NAME_CITIZEN findings for every occurrence of names."""
+    found = list(detect(text))
+    for n in names:
+        for m in re.finditer(re.escape(n), text):
+            found.append(Finding(Kind.NAME_CITIZEN, m.start(), m.end(), n, "manual"))
+    return sorted(found, key=lambda f: f.start)
+
+
 def detect_fn(text):
-    return detect(text, FakeNer({"Siti Rahmawati": Kind.NAME_CITIZEN}),
-                  EmployeeDirectory.from_names([]))
+    return with_names(text, ["Siti Rahmawati"])
 
 
 def _run(src, tmp_path, version):
@@ -412,8 +418,7 @@ def test_word_equal_to_a_placeholder_is_not_a_false_leak(tmp_path):
     d.save(src)
 
     def fn(text):
-        return detect(text, FakeNer({"Siti Rahmawati": Kind.NAME_CITIZEN, "NIK": Kind.NAME_CITIZEN}),
-                      EmployeeDirectory.from_names([]))
+        return with_names(text, ["Siti Rahmawati", "NIK"])
 
     out = tmp_path / "out.docx"
     redact_docx(src, out, fn, Version.PUBLIK)
