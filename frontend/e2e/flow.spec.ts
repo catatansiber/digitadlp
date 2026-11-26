@@ -132,9 +132,10 @@ test("alur lengkap: admin, unggah, tandai nama, buat versi, unduh, rilis, audit"
 });
 
 test("sensor area: kotak digambar di atas nama, Publik bersih, Rahasia utuh", async ({ page }) => {
+  const pdfPath = makePdf();
   await login(page, "rina", "sandi-e2e-123");
   await page.goto("/upload");
-  await page.locator('input[type="file"]').setInputFiles(makePdf());
+  await page.locator('input[type="file"]').setInputFiles(pdfPath);
   await expect(page).toHaveURL(/\/dokumen\/[^/]+$/);
   await expect(page.getByText("Menunggu cek")).toBeVisible({ timeout: 60_000 });
   // Nama tidak ditandai sebagai temuan; hanya area yang menutupnya.
@@ -143,13 +144,21 @@ test("sensor area: kotak digambar di atas nama, Publik bersih, Rahasia utuh", as
   await expect(img).toBeVisible();
   await expect.poll(() => img.evaluate((e: HTMLImageElement) => e.complete && e.naturalWidth > 0)).toBe(true);
   const bb = (await img.boundingBox())!;
-  // Fixture A4 (595x842 pt): nama pada baseline y=160, x mulai 72, ukuran 11.
+  // Kotak dihitung dari rect teks nama yang sebenarnya pada fixture (A4 595x842 pt), plus sedikit padding.
+  const [rx0, ry0, rx1, ry1] = JSON.parse(
+    py(
+      "import sys, json, pymupdf as fitz\nr = fitz.open(sys.argv[1])[0].search_for(sys.argv[2])[0]\nprint(json.dumps([r.x0, r.y0, r.x1, r.y1]))",
+      pdfPath,
+      NAMA,
+    ),
+  ) as number[];
+  const pad = 4;
   const fx = (x: number) => bb.x + (x / 595) * bb.width;
   const fy = (y: number) => bb.y + (y / 842) * bb.height;
-  await page.mouse.move(fx(60), fy(148));
+  await page.mouse.move(fx(rx0 - pad), fy(ry0 - pad));
   await page.mouse.down();
-  await page.mouse.move(fx(130), fy(158), { steps: 5 });
-  await page.mouse.move(fx(200), fy(166), { steps: 5 });
+  await page.mouse.move(fx((rx0 + rx1) / 2), fy((ry0 + ry1) / 2), { steps: 5 });
+  await page.mouse.move(fx(rx1 + pad), fy(ry1 + pad), { steps: 5 });
   await page.mouse.up();
   await expect(page.getByText("Area 1 · Halaman 1")).toBeVisible();
   await expect(page.locator(".area-box")).toHaveCount(1);
@@ -163,7 +172,7 @@ test("sensor area: kotak digambar di atas nama, Publik bersih, Rahasia utuh", as
   const publik = pdfText(await download(page, "Publik"));
   const rahasia = pdfText(await download(page, "Rahasia"));
   expect(rahasia).toContain(NAMA);
-  expect(publik).not.toContain("Rahmawati");
+  for (const frag of ["Siti", "Rahma", "wati"]) expect(publik).not.toContain(frag);
   expect(publik).not.toContain(NIK);
   expect(publik).toContain("Surat Keterangan");
 });
