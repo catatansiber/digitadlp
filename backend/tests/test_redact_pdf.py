@@ -476,3 +476,95 @@ def test_lone_word_elsewhere_does_not_fail(make_pdf, tmp_path, split):
     got = fitz.open(out)[0].get_text()
     assert "Bontang, 4 November 2024" in got and "Taman Mawar Indah" in got
     assert "Jl. Mawar" not in got and got.count("Bontang") == 1
+
+
+# --- area redactions -------------------------------------------------------
+
+def _text_pdf(path, lines, rotation=0):
+    d = fitz.open()
+    p = d.new_page()
+    for pos, s in lines:
+        p.insert_text(pos, s, fontsize=12)
+    if rotation:
+        p.set_rotation(rotation)
+    d.save(path)
+    d.close()
+    return path
+
+
+def _area_of(path, needle):
+    """Display-space fractional box around `needle` on page 0."""
+    d = fitz.open(path)
+    p = d[0]
+    r = p.search_for(needle)[0] * p.rotation_matrix
+    W, H = p.rect.width, p.rect.height
+    d.close()
+    r.normalize()
+    return (0, ((r.x0 - 2) / W, (r.y0 - 2) / H, (r.x1 + 2) / W, (r.y1 + 2) / H))
+
+
+def test_area_removes_text_publik_internal_not_rahasia(tmp_path):
+    src = _text_pdf(tmp_path / "a.pdf", [((72, 100), "RAHASIAKOTAK"),
+                                         ((72, 300), "TETAPADA")])
+    area = _area_of(src, "RAHASIAKOTAK")
+    for v in (Version.PUBLIK, Version.INTERNAL, Version.RAHASIA):
+        out = tmp_path / f"{v.value}.pdf"
+        redact_pdf(src, out, [[]], v, areas=[area])
+        text = fitz.open(out)[0].get_text()
+        assert "TETAPADA" in text
+        if v == Version.RAHASIA:
+            assert "RAHASIAKOTAK" in text
+        else:
+            assert "RAHASIAKOTAK" not in text
+            assert b"RAHASIAKOTAK" not in out.read_bytes()
+
+
+def test_area_wipes_image_pixels(tmp_path):
+    img = Image.new("RGB", (200, 200), (255, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    d = fitz.open()
+    p = d.new_page()
+    p.insert_image(fitz.Rect(100, 100, 300, 300), stream=buf.getvalue())
+    src = tmp_path / "img.pdf"
+    d.save(src)
+    W, H = p.rect.width, p.rect.height
+    d.close()
+    box = (150 / W, 150 / H, 250 / W, 250 / H)
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, [[]], Version.PUBLIK, areas=[(0, box)])
+    page = fitz.open(out)[0]
+    pix = page.get_pixmap(dpi=72, clip=fitz.Rect(152, 152, 248, 248))
+    assert pix.pixel(pix.width // 2, pix.height // 2) == (0, 0, 0)
+    for y in range(pix.height):
+        for x in range(pix.width):
+            r, g, b = pix.pixel(x, y)
+            assert not (r > 200 and g < 80 and b < 80)
+    # embedded image itself no longer carries red pixels in that region
+    xref = page.get_images()[0][0]
+    raw = fitz.Pixmap(page.parent, xref)
+    assert raw.pixel(raw.width // 2, raw.height // 2)[:3] != (255, 0, 0)
+
+
+def test_area_on_rotated_page(tmp_path):
+    # unrotated coords: text near top-left; after /Rotate 90 it appears top-right
+    src = _text_pdf(tmp_path / "rot.pdf", [((72, 100), "SUDUTKIRI"),
+                                           ((72, 700), "LAINNYA")], rotation=90)
+    area = _area_of(src, "SUDUTKIRI")
+    assert area[1][0] > 0.5  # display space: on the right half
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, [[]], Version.PUBLIK, areas=[area])
+    text = fitz.open(out)[0].get_text()
+    assert "SUDUTKIRI" not in text and "LAINNYA" in text
+
+
+def test_area_on_scanned_page_survives_reocr(make_scanned_pdf, tmp_path):
+    src = make_scanned_pdf(TEXT)
+    out = tmp_path / "out.pdf"
+    # cover the whole top half: NIK line goes black even with no findings
+    redact_pdf(src, out, [[]], Version.PUBLIK, areas=[(0, (0.0, 0.0, 1.0, 0.5))])
+    page = fitz.open(out)[0]
+    assert NIK not in page.get_text().replace(" ", "")
+    assert NIK not in "".join(extract_pdf_text(out)).replace(" ", "")
+    pix = page.get_pixmap(dpi=30)
+    assert pix.pixel(pix.width // 2, pix.height // 4) == (0, 0, 0)

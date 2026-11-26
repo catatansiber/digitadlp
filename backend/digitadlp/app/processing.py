@@ -129,11 +129,13 @@ def render_versi(
             pages, _, fn = _analyze(src, ext, corrections)
         else:
             fn = corrected_detect_fn(detect, corrections)
+        from .workflow import areas_for  # local: workflow imports processing
+        areas = areas_for(db, doc) if ext == "pdf" else []
         touch()
         for v in VERSIONS:
             dst = tmpdir / f"{v}.{ext}"
             if ext == "pdf":
-                redact_pdf(src, dst, pages, Version(v), fn)
+                redact_pdf(src, dst, pages, Version(v), fn, areas=areas)
             else:
                 redact_docx(src, dst, fn, Version(v))
             out[v] = dst

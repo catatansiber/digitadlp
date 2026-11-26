@@ -519,11 +519,17 @@ def redact_pdf(
     findings_per_page: list[list[Finding]],
     version: Version,
     detect_fn=find_patterns,
+    areas: list[tuple[int, tuple[float, float, float, float]]] | None = None,
 ) -> None:
     doc = _open(Path(src))
     try:
         if len(findings_per_page) > doc.page_count:
             raise DocumentError("more finding pages than PDF pages")
+        areas_by_page: dict[int, list] = {}
+        for pno, box in areas or []:
+            if not 0 <= pno < doc.page_count:
+                raise DocumentError(f"area on missing page {pno + 1}")
+            areas_by_page.setdefault(pno, []).append(box)
         if version == Version.RAHASIA:
             doc.save(Path(dst), garbage=4, deflate=True)
             return
@@ -550,8 +556,14 @@ def redact_pdf(
                 (f, a) for f in findings
                 if (a := action_for(f, version)) in (Action.REDACT, Action.MASK)
             ]
-            if not targets:
+            page_areas = areas_by_page.get(i, [])
+            if not targets and not page_areas:
                 continue
+            for x0, y0, x1, y1 in page_areas:
+                W, H = page.rect.width, page.rect.height
+                r = fitz.Rect(x0 * W, y0 * H, x1 * W, y1 * H) * page.derotation_matrix
+                r.normalize()
+                page.add_redact_annot(r, fill=(0, 0, 0))
             all_targets += [f for f, _ in targets]
             has_regions = kind == "text" and bool(_image_rects(page))
             if kind != "text":
