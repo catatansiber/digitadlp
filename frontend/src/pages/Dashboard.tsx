@@ -66,7 +66,11 @@ export function Dashboard() {
       ) : q.isLoading ? (
         <p className="loading">Memuat…</p>
       ) : docs.length === 0 ? (
-        <EmptyState>Belum ada dokumen. Unggah dokumen pertama.</EmptyState>
+        <EmptyState>
+          {canUpload
+            ? "Belum ada dokumen. Unggah dokumen pertama."
+            : "Belum ada dokumen. Dokumen diunggah oleh akun Pengunggah atau Pemeriksa; buat akunnya di menu Admin → Pengguna."}
+        </EmptyState>
       ) : (
         <Table>
           <thead>
