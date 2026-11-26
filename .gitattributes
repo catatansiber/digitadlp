@@ -1,0 +1,4 @@
+# Skrip yang dijalankan di Linux/container harus berakhiran LF, juga di Windows.
+*.sh text eol=lf
+docker/* text eol=lf
+Dockerfile text eol=lf
