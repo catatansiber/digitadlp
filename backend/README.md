@@ -114,3 +114,6 @@ pytest -v
 - Alamat pada baris yang juga memuat Telp/Telepon/Fax/Faks/Email/Website/Web/Kode Pos dianggap alamat kantor (kop surat) dan tidak disamarkan. Akibatnya alamat pribadi yang ditulis sebaris dengan nomor telepon juga tidak terdeteksi sebagai alamat (nomor HP tetap terdeteksi).
 - Nama warga dikenali dari label formulir di awal baris (Nama, Nama Lengkap, Nama Pemohon/Pemilik/Pelapor/Ayah/Ibu/Wali, Atas Nama) diikuti ":" atau ";", termasuk tata letak kolom OCR "Nama" / ":" / nilai. Jika OCR membaca semua label lebih dulu lalu semua nilai, nama tidak bisa dipasangkan dan perlu ditandai manual.
 - Bila temuan harus dicari per kata (mis. alamat dua baris), kata lain hanya dicari di sekitar kata jangkar (±3 tinggi baris); bila tidak ketemu, proses gagal (fail-closed) alih-alih menyamarkan kata yang sama di tempat lain.
+- Filter kop surat (alamat/e-mail sebaris dengan Telp/Fax/Web/Kode Pos) hanya berlaku pada 6 baris tak-kosong pertama halaman; baris di bawahnya selalu diperiksa.
+- NIP tanpa kata "NIP" yang ditulis dengan tanda hubung atau spasi ganda tidak terdeteksi.
+- Gambar miring/menyamping yang tertanam di halaman PDF bertext tidak diputar sebelum OCR.

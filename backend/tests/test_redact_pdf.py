@@ -462,3 +462,12 @@ def test_letterhead_page_end_to_end(make_scanned_pdf, tmp_path):
     got = "".join(extract_pdf_text(out))
     assert "Merdeka" in got and "CONTOH" in got
     assert "Santoso" not in got and "Mawar" not in got
+
+
+def test_fallback_partial_anchor_group_fails_closed(make_pdf, tmp_path):
+    text = "Taman Mawar Indah\n\n\n\n\n\n\n\n\nAlamat Jl. Mawar No. 5\nKota Contoh"
+    src = make_pdf(text)
+    s = text.index("Jl.")
+    f = Finding(Kind.ADDRESS, s, len(text), text[s:], "test")
+    with pytest.raises(DocumentError):
+        redact_pdf(src, tmp_path / "o.pdf", [[f]], Version.PUBLIK)

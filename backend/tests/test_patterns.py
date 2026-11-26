@@ -221,3 +221,32 @@ def test_letterhead_email_not_flagged():
 
 def test_personal_email_with_label_only_still_flagged():
     assert [f.kind for f in find_patterns("E-mail: siti@contoh.id")] == [Kind.EMAIL]
+
+
+# ---- review: gaps, list markers, letterhead block ----
+_FILLER = "Surat Keterangan\nNomor 1\nPerihal X\nLampiran -\nKepada Yth\nDi tempat\n"
+
+
+def test_label_name_stops_at_gap_and_next_label():
+    text = "Nama : Budi Santoso      NIK : 6474015203880002"
+    assert _kinds(text) == [(Kind.NAME_CITIZEN, "Budi Santoso"),
+                            (Kind.NIK, "6474015203880002")]
+    assert _names("Nama : Budi Santoso\tNIP : -") == ["Budi Santoso"]
+    assert _names("Nama : Budi Santoso Tempat Lahir : Bontang") == ["Budi Santoso"]
+    assert _names("Nama : Budi Santoso NIK: 1") == ["Budi Santoso"]
+
+
+def test_label_name_list_markers():
+    assert _names("1. Nama Lengkap : Budi Santoso") == ["Budi Santoso"]
+    assert _names("a. Nama : Siti Aminah") == ["Siti Aminah"]
+    assert _names("2) Nama\n:\nSiti Aminah") == ["Siti Aminah"]
+
+
+def test_personal_email_with_telp_below_letterhead_kept():
+    text = _FILLER + "Email: budi@gmail.com Telp 0812345678"
+    assert (Kind.EMAIL, "budi@gmail.com") in _kinds(text)
+
+
+def test_personal_address_with_telp_below_letterhead_kept():
+    text = _FILLER + "Alamat : Jl. Mawar No. 5 RT 02 Telp rumah 081234567890"
+    assert any(k == Kind.ADDRESS and t.startswith("Jl. Mawar") for k, t in _kinds(text))

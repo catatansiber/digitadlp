@@ -35,11 +35,12 @@ _BARE_NIP = re.compile(r"(?<![\d.\-])(\d{8}( ?)\d{6}\2\d\2\d{3})(?![\d]|[.\-]\d)
 # Form labels whose value is a citizen name. OCR may read ':' as ';'.
 _NAME_LABEL = (r"(?:Nama\s+Lengkap|Nama\s+Pemohon|Nama\s+Pemilik|Nama\s+Pelapor"
                r"|Nama\s+Ayah|Nama\s+Ibu|Nama\s+Wali|Atas\s+Nama|Nama)")
+_LIST_MARK = r"(?:(?:\d{1,2}|[a-zA-Z])[.)][ \t]*)?"
 _NAME_INLINE = re.compile(
-    rf"^[ \t]*{_NAME_LABEL}[ \t]*[:;][ \t]*([A-Za-z][^\n]*?)[ \t]*$", re.I | re.M
+    rf"^[ \t]*{_LIST_MARK}{_NAME_LABEL}[ \t]*[:;][ \t]*([A-Za-z][^\n]*?)[ \t]*$", re.I | re.M
 )
 _NAME_COLUMN = re.compile(
-    rf"^[ \t]*{_NAME_LABEL}[ \t]*\n[ \t]*[:;][ \t]*\n[ \t]*([A-Za-z][A-Za-z .,']*?)[ \t]*$",
+    rf"^[ \t]*{_LIST_MARK}{_NAME_LABEL}[ \t]*\n[ \t]*[:;][ \t]*\n[ \t]*([A-Za-z][A-Za-z .,']*?)[ \t]*$",
     re.I | re.M,
 )
 _LABEL_WORDS = frozenset(
@@ -73,7 +74,25 @@ def _address_end(text: str, start: int) -> int:
     return i
 
 
+LETTERHEAD_LINES = 6
+
+
+def _letterhead_end(text: str) -> int:
+    """offset just past the first LETTERHEAD_LINES non-empty lines"""
+    n = 0
+    for m in re.finditer(r"[^\n]*(?:\n|$)", text):
+        if m.group().strip():
+            n += 1
+            if n >= LETTERHEAD_LINES:
+                return m.end()
+        if m.end() >= len(text):
+            break
+    return len(text)
+
+
 def _institutional(text: str, start: int) -> bool:
+    if start >= _letterhead_end(text):
+        return False
     eol = text.find("\n", start)
     return bool(_INSTITUTIONAL.search(text, start, len(text) if eol < 0 else eol))
 
@@ -83,6 +102,8 @@ _LETTERHEAD = re.compile(r"(?<![A-Za-z])(?:Telp|Telepon|Fax|Faks|Website|Web|Kod
 
 
 def _letterhead_line(text: str, pos: int) -> bool:
+    if pos >= _letterhead_end(text):
+        return False
     sol = text.rfind("\n", 0, pos) + 1
     eol = text.find("\n", pos)
     return bool(_LETTERHEAD.search(text, sol, len(text) if eol < 0 else eol))
@@ -143,6 +164,26 @@ def _bare_nips(text: str):
             yield m.start(1), m.end(1)
 
 
+_GAP = re.compile(r"[ ]{3,}|\t")
+_NEXT_LABEL = re.compile(r"[:;]")
+
+
+def _name_len(v: str) -> int:
+    """length of the name part of an inline value: up to a wide gap or the
+    next "<Label> :" (one word, or two known label words, before ':')"""
+    g = _GAP.search(v)
+    end = g.start() if g else len(v)
+    c = _NEXT_LABEL.search(v, 0, end)
+    if c:
+        words = list(re.finditer(r"\S+", v[:c.start()]))
+        cut = words[-1].start() if words else 0
+        if (len(words) >= 2 and words[-2].group().lower() in _LABEL_WORDS
+                and words[-1].group().lower().strip(".") in _LABEL_WORDS):
+            cut = words[-2].start()
+        end = cut
+    return len(v[:end].rstrip(" \t,"))
+
+
 def _is_name_value(v: str, column: bool) -> bool:
     if not 2 <= len(v) <= 60 or not v[0].isalpha():
         return False
@@ -157,8 +198,9 @@ def _is_name_value(v: str, column: bool) -> bool:
 def _label_names(text: str):
     for pat, column in ((_NAME_INLINE, False), (_NAME_COLUMN, True)):
         for m in pat.finditer(text):
-            if _is_name_value(m.group(1), column):
-                yield m.start(1), m.end(1)
+            n = len(m.group(1)) if column else _name_len(m.group(1))
+            if _is_name_value(m.group(1)[:n], column):
+                yield m.start(1), m.start(1) + n
 
 
 def _spans(pattern: re.Pattern, text: str, group: int = 0):
