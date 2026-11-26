@@ -9,7 +9,7 @@ import zipfile
 from pathlib import PurePath
 
 import pymupdf
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from ..models import Finding, Kind, Label
@@ -18,7 +18,7 @@ from .audit import record
 from .corrections import _norm
 from .jobs import enqueue
 from .models import (
-    Correction, CorrectionOp, Document, JobKind, Role, Status, User, utcnow,
+    AreaRedaction, Correction, CorrectionOp, Document, JobKind, Role, Status, User, utcnow,
 )
 from .processing import label_rules
 from .storage import FileStore
@@ -186,6 +186,80 @@ def _invalidate(doc: Document) -> None:
     doc.status = Status.MENUNGGU_CEK
 
 
+MAX_AREAS = 200
+MIN_AREA_SIDE = 0.005
+MSG_AREA_BOX = ("Kotak tidak valid: koordinat harus di antara 0 dan 1, "
+                "dengan sisi minimal 0,5% dari halaman.")
+MSG_AREA_PAGE = "Halaman kotak di luar jangkauan."
+MSG_AREA_MAX = f"Jumlah kotak sensor maksimal {MAX_AREAS} per dokumen."
+MSG_AREA_NOT_FOUND = "Kotak sensor tidak ditemukan."
+
+
+def _valid_box(box) -> bool:
+    try:
+        x0, y0, x1, y1 = (float(v) for v in box)
+    except (TypeError, ValueError):
+        return False
+    return (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1
+            and x1 - x0 >= MIN_AREA_SIDE - 1e-9 and y1 - y0 >= MIN_AREA_SIDE - 1e-9)
+
+
+def add_area(db: Session, user: User, doc: Document, page: int,
+             box: tuple[float, float, float, float], page_count: int,
+             *, store: FileStore | None = None) -> AreaRedaction:
+    """`store` (opsional) dipakai untuk menghapus versi yang sudah dibuat."""
+    _owner(user, doc)
+    _state(doc, Status.MENUNGGU_CEK, Status.DISETUJUI)
+    if not isinstance(page, int) or isinstance(page, bool) or not 0 <= page < page_count:
+        raise WorkflowError(422, MSG_AREA_PAGE)
+    if not _valid_box(box):
+        raise WorkflowError(422, MSG_AREA_BOX)
+    n = db.scalar(select(func.count()).select_from(AreaRedaction)
+                  .where(AreaRedaction.document_id == doc.id))
+    if n >= MAX_AREAS:
+        raise WorkflowError(422, MSG_AREA_MAX)
+    x0, y0, x1, y1 = (float(v) for v in box)
+    a = AreaRedaction(document_id=doc.id, page=page, x0=x0, y0=y0, x1=x1, y1=y1,
+                      author_id=user.id)
+    db.add(a)
+    approved = doc.status == Status.DISETUJUI
+    if approved:
+        _invalidate(doc)
+    _record(db, user, "area_tambah", doc, detail=f"hal={page}")
+    db.commit()
+    if approved and store is not None:
+        store.delete_versions(doc.id)
+    return a
+
+
+def delete_area(db: Session, user: User, doc: Document, area_id: str,
+                *, store: FileStore | None = None) -> None:
+    _owner(user, doc)
+    _state(doc, Status.MENUNGGU_CEK, Status.DISETUJUI)
+    a = db.get(AreaRedaction, area_id)
+    if a is None or a.document_id != doc.id:
+        raise WorkflowError(404, MSG_AREA_NOT_FOUND)
+    page = a.page
+    db.delete(a)
+    approved = doc.status == Status.DISETUJUI
+    if approved:
+        _invalidate(doc)
+    _record(db, user, "area_hapus", doc, detail=f"hal={page}")
+    db.commit()
+    if approved and store is not None:
+        store.delete_versions(doc.id)
+
+
+def list_areas(db: Session, doc: Document) -> list[AreaRedaction]:
+    return list(db.scalars(select(AreaRedaction)
+                           .where(AreaRedaction.document_id == doc.id)
+                           .order_by(AreaRedaction.page, AreaRedaction.created_at)))
+
+
+def areas_for(db: Session, doc: Document) -> list[tuple[int, tuple[float, float, float, float]]]:
+    return [(a.page, (a.x0, a.y0, a.x1, a.y1)) for a in list_areas(db, doc)]
+
+
 def approve(db: Session, user: User, doc: Document) -> Document:
     _owner(user, doc)
     _state(doc, Status.MENUNGGU_CEK)
@@ -213,6 +287,7 @@ def reupload(db: Session, store: FileStore, user: User, doc: Document,
     doc.return_reason = None
     doc.status = Status.DIPROSES
     db.execute(delete(Correction).where(Correction.document_id == doc.id))
+    db.execute(delete(AreaRedaction).where(AreaRedaction.document_id == doc.id))
     enqueue(db, JobKind.DETEKSI, doc)
     _record(db, user, "upload", doc, detail=f"ext={ext} ulang")
     db.commit()
