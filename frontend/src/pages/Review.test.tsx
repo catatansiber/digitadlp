@@ -226,3 +226,44 @@ test("review: failed document offers reupload to owner", async () => {
   await open(owner);
   expect(await screen.findByLabelText("Unggah ulang")).toBeInTheDocument();
 });
+
+function pageHandlers() {
+  return [
+    http.get("/api/documents/d1/pages", () => HttpResponse.json({ count: 2, sizes: [[600, 800], [600, 800]] })),
+    http.get("/api/documents/d1/areas", () =>
+      HttpResponse.json([{ id: "a1", page: 0, x0: 0.1, y0: 0.1, x1: 0.3, y1: 0.2 }]),
+    ),
+  ];
+}
+
+test("pdf owner sees Halaman tab with areas", async () => {
+  server.use(...pageHandlers());
+  await open(owner);
+  await userEvent.click(await screen.findByRole("tab", { name: "Halaman" }));
+  expect(await screen.findByRole("img", { name: "Halaman 1" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Hapus area 1, halaman 1" })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("tab", { name: "Teks" }));
+  expect(await screen.findByText("Hal dua")).toBeInTheDocument();
+});
+
+test("unit mate Halaman tab is read-only", async () => {
+  server.use(...pageHandlers());
+  await open(mate);
+  await userEvent.click(await screen.findByRole("tab", { name: "Halaman" }));
+  expect(await screen.findByText(/Area 1 · Halaman 1/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Hapus area/ })).toBeNull();
+  expect(screen.queryByTestId("draw-surface")).toBeNull();
+});
+
+test("docx has no Halaman tab", async () => {
+  doc = { ...base, ext: "docx", findings: [base.findings[0]] };
+  await open(owner);
+  await screen.findByText("Hal dua");
+  expect(screen.queryByRole("tab", { name: "Halaman" })).toBeNull();
+});
+
+test("viewer without findings has no Halaman tab", async () => {
+  doc = { ...base, findings: undefined };
+  await open(mate);
+  expect(screen.queryByRole("tab", { name: "Halaman" })).toBeNull();
+});

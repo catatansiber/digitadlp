@@ -98,6 +98,17 @@ Semua endpoint butuh login (cookie sesi dari `POST /api/auth/login`), kecuali lo
 - `GET /api/documents/{id}/text` (teks sumber per halaman; hak akses sama dengan melihat temuan, diaudit)
 - Admin: `GET/POST /api/admin/units`, `GET/POST /admin/users`, `PATCH /admin/users/{id}`, `GET/PUT /admin/label-rules`, `GET /admin/audit?document_id=&actor_id=&limit=100` (maks. 500, terbaru dulu)
 
+## Sensor area
+
+Selain deteksi otomatis, pemilik dokumen dapat menutup bagian halaman secara manual (tanda tangan, foto, stempel, coretan tangan).
+
+- Buka halaman Cek temuan, pilih tab **Halaman**, lalu seret kotak di atas bagian yang perlu ditutup. Kotak bisa dihapus dari daftar area di samping halaman.
+- Hanya untuk dokumen **PDF**. DOCX tidak memiliki tab Halaman.
+- Hanya pemilik yang dapat menambah atau menghapus area, saat status Menunggu cek atau Disetujui. Mengubah area pada dokumen yang sudah disetujui membatalkan persetujuan dan versi harus dibuat ulang.
+- Area berlaku untuk versi **Publik** dan **Internal**, tidak untuk Rahasia.
+- Teks, gambar, dan gambar vektor (garis, bentuk) di bawah kotak dihapus dari file hasil, bukan sekadar ditimpa warna.
+- Unggah ulang menghapus semua area. Gambar halaman tidak di-cache dan akses halaman dicatat di Audit.
+
 ## Tes
 
 ```bash
@@ -109,3 +120,11 @@ pytest -v
 - Gambar yang luasnya < 20% halaman pada halaman PDF bertext tidak di-OCR.
 - Gambar EMF/WMF/SVG serta objek tertanam, makro, dan altChunk pada DOCX ditolak.
 - NIK hanya dikenali jika ditulis 16 digit berurutan atau dikelompokkan 4-4-4-4.
+- Halaman pindaian diputar otomatis (OSD tesseract; bila teks terlalu sedikit, dicoba 0/90/180/270 dan dipilih yang paling banyak kata yakin). Lapisan teks hasil OCR ulang dibuat dari gambar tegak; tampilan halaman tetap seperti aslinya.
+- NIP tanpa kata "NIP" dikenali hanya jika 18 digit (berurutan atau 8-6-1-3 dengan satu spasi) dan strukturnya sah: tanggal lahir 1940-2010, TMT 1960-tahun depan, digit ke-15 1/2. NIP dengan pola lain tetap butuh kata "NIP".
+- Alamat pada baris yang juga memuat Telp/Telepon/Fax/Faks/Email/Website/Web/Kode Pos dianggap alamat kantor (kop surat) dan tidak disamarkan. Akibatnya alamat pribadi yang ditulis sebaris dengan nomor telepon juga tidak terdeteksi sebagai alamat (nomor HP tetap terdeteksi).
+- Nama warga dikenali dari label formulir di awal baris (Nama, Nama Lengkap, Nama Pemohon/Pemilik/Pelapor/Ayah/Ibu/Wali, Atas Nama) diikuti ":" atau ";", termasuk tata letak kolom OCR "Nama" / ":" / nilai. Jika OCR membaca semua label lebih dulu lalu semua nilai, nama tidak bisa dipasangkan dan perlu ditandai manual.
+- Bila temuan harus dicari per kata (mis. alamat dua baris), kata lain hanya dicari di sekitar kata jangkar (±3 tinggi baris); bila tidak ketemu, proses gagal (fail-closed) alih-alih menyamarkan kata yang sama di tempat lain.
+- Filter kop surat (alamat/e-mail sebaris dengan Telp/Fax/Web/Kode Pos) hanya berlaku pada 6 baris tak-kosong pertama halaman; baris di bawahnya selalu diperiksa.
+- NIP tanpa kata "NIP" yang ditulis dengan tanda hubung atau spasi ganda tidak terdeteksi.
+- Gambar miring/menyamping yang tertanam di halaman PDF bertext tidak diputar sebelum OCR.

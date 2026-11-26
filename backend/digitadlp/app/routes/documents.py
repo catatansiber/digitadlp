@@ -1,5 +1,7 @@
 import json
 
+import pymupdf
+
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -157,6 +159,98 @@ def get_text(doc_id: str, request: Request, user: User = Depends(current_user),
     record(db, user, "lihat_teks", doc, detail="")
     db.commit()
     return JSONResponse({"pages": list(pages)}, headers={"Cache-Control": "no-store"})
+
+
+def _load_pages(db: Session, user: User, doc_id: str, what: str) -> Document:
+    """Dokumen PDF yang boleh dilihat gambarnya (unit pemilik); selain itu 404."""
+    doc = db.get(Document, doc_id)
+    if doc is None:
+        raise HTTPException(404, MSG_NOT_FOUND)
+    if not can_see_rahasia(user, doc):
+        record(db, user, "akses_ditolak", doc, detail=what)
+        db.commit()
+        raise HTTPException(404, MSG_NOT_FOUND)
+    if doc.ext != "pdf":
+        raise HTTPException(404, MSG_NOT_FOUND)
+    return doc
+
+
+def _page_sizes(request: Request, doc: Document) -> list[list[float]]:
+    try:
+        with request.app.state.store.decrypted(doc.id, "source.pdf") as src:
+            with pymupdf.open(src) as d:
+                return [[round(p.rect.width, 2), round(p.rect.height, 2)] for p in d]
+    except Exception:  # noqa: BLE001 - jangan bocorkan galat
+        raise HTTPException(422, MSG_DOC_ERROR) from None
+
+
+@router.get("/{doc_id}/pages")
+def get_pages(doc_id: str, request: Request, user: User = Depends(current_user),
+              db: Session = Depends(get_db)):
+    doc = _load_pages(db, user, doc_id, "halaman")
+    sizes = _page_sizes(request, doc)
+    return JSONResponse({"count": len(sizes), "sizes": sizes},
+                        headers={"Cache-Control": "no-store"})
+
+
+@router.get("/{doc_id}/pages/{n}.png")
+def get_page_png(doc_id: str, n: int, request: Request, user: User = Depends(current_user),
+                 db: Session = Depends(get_db)):
+    doc = _load_pages(db, user, doc_id, f"hal={n}")
+    try:
+        with request.app.state.store.decrypted(doc.id, "source.pdf") as src:
+            with pymupdf.open(src) as d:
+                if not 0 <= n < d.page_count:
+                    png = None
+                else:
+                    png = d[n].get_pixmap(dpi=110).tobytes("png")
+    except Exception:  # noqa: BLE001 - jangan bocorkan galat render
+        raise HTTPException(422, MSG_DOC_ERROR) from None
+    if png is None:
+        raise HTTPException(404, "Halaman tidak ditemukan.")
+    record(db, user, "lihat_halaman", doc, detail=f"hal={n}")
+    db.commit()
+    return Response(png, media_type="image/png",
+                    headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+class AreaIn(BaseModel):
+    page: int
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+
+def _area_out(a) -> dict:
+    return {"id": a.id, "page": a.page, "x0": a.x0, "y0": a.y0, "x1": a.x1, "y1": a.y1,
+            "author_id": a.author_id, "created_at": _iso(a.created_at)}
+
+
+@router.get("/{doc_id}/areas")
+def get_areas(doc_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    doc = _load_pages(db, user, doc_id, "area")
+    return JSONResponse([_area_out(a) for a in workflow.list_areas(db, doc)],
+                        headers={"Cache-Control": "no-store"})
+
+
+@router.post("/{doc_id}/areas", status_code=201)
+def post_area(doc_id: str, body: AreaIn, request: Request,
+              user: User = Depends(current_user), db: Session = Depends(get_db)):
+    doc = _load_pages(db, user, doc_id, "area")
+    _run(workflow._owner, user, doc)  # 403 sebelum membuka file sumber
+    count = len(_page_sizes(request, doc))
+    a = _run(workflow.add_area, db, user, doc, body.page,
+             (body.x0, body.y0, body.x1, body.y1), count, store=request.app.state.store)
+    return _area_out(a)
+
+
+@router.delete("/{doc_id}/areas/{area_id}", status_code=204)
+def delete_area(doc_id: str, area_id: str, request: Request,
+                user: User = Depends(current_user), db: Session = Depends(get_db)):
+    doc = _load_pages(db, user, doc_id, "area")
+    _run(workflow.delete_area, db, user, doc, area_id, store=request.app.state.store)
+    return Response(status_code=204)
 
 
 class LabelIn(BaseModel):

@@ -105,6 +105,17 @@ npm run dev
 
 Vite meneruskan (proxy) permintaan `/api` ke `http://127.0.0.1:8000`, sehingga cookie sesi berlaku di origin yang sama.
 
+## Sensor area
+
+Selain deteksi otomatis, pemilik dokumen dapat menutup bagian halaman secara manual (tanda tangan, foto, stempel, coretan tangan).
+
+- Buka halaman Cek temuan, pilih tab **Halaman**, lalu seret kotak di atas bagian yang perlu ditutup. Kotak bisa dihapus dari daftar area di samping halaman.
+- Hanya untuk dokumen **PDF**. DOCX tidak memiliki tab Halaman.
+- Hanya pemilik yang dapat menambah atau menghapus area, saat status Menunggu cek atau Disetujui. Mengubah area pada dokumen yang sudah disetujui membatalkan persetujuan dan versi harus dibuat ulang.
+- Area berlaku untuk versi **Publik** dan **Internal**, tidak untuk Rahasia.
+- Teks, gambar, dan gambar vektor (garis, bentuk) di bawah kotak dihapus dari file hasil, bukan sekadar ditimpa warna.
+- Unggah ulang menghapus semua area. Gambar halaman tidak di-cache dan akses halaman dicatat di Audit.
+
 ## Tes
 
 ```bash

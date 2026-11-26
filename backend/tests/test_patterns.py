@@ -128,3 +128,125 @@ def test_lowercase_full_cue_not_address(text):
 ])
 def test_address_kept_whole(text, addr):
     assert [f.text for f in find_patterns(text) if f.kind == Kind.ADDRESS] == [addr]
+
+
+# ---- bare NIP (no keyword) ----
+def _kinds(text):
+    return [(f.kind, f.text) for f in find_patterns(text)]
+
+
+def test_bare_nip_contiguous():
+    assert _kinds("Kepala Bidang 197402192001121004 ttd") == [
+        (Kind.NIP, "197402192001121004")]
+
+
+def test_bare_nip_spaced():
+    assert _kinds("Budi\n19740219 200112 1 004\n") == [
+        (Kind.NIP, "19740219 200112 1 004")]
+
+
+def test_bare_nip_invalid_month_rejected():
+    assert _kinds("kode 197402192001131004") == []
+
+
+def test_bare_nip_random_digits_rejected():
+    assert _kinds("ref 938475610293847561") == []
+
+
+def test_bare_nip_column_layout():
+    text = "Nip.\n:\nJabatan\n: Kepala\n197001012000031001"
+    assert (Kind.NIP, "197001012000031001") in _kinds(text)
+
+
+def test_bare_nip_does_not_steal_nik():
+    assert _kinds("NIK 6474015203880002") == [(Kind.NIK, "6474015203880002")]
+
+
+# ---- institutional addresses ----
+def test_letterhead_address_not_emitted():
+    text = "PEMERINTAH KOTA CONTOH\nJl. Merdeka No. 1 Kota Contoh Telp (0548) 123 Kode Pos 75311"
+    assert [f for f in find_patterns(text) if f.kind == Kind.ADDRESS] == []
+
+
+def test_letterhead_email_line_not_address():
+    text = "Jl. Merdeka No. 1 Kota Contoh, e-mail: dinas@contoh.go.id"
+    assert [f for f in find_patterns(text) if f.kind == Kind.ADDRESS] == []
+
+
+def test_personal_address_still_emitted():
+    text = "Telp kantor 123\nAlamat : Jl. Mawar No. 5 RT 02"
+    assert [f.text for f in find_patterns(text) if f.kind == Kind.ADDRESS] == [
+        "Jl. Mawar No. 5 RT 02"]
+
+
+# ---- label-based names ----
+def _names(text):
+    return [f.text for f in find_patterns(text) if f.kind == Kind.NAME_CITIZEN]
+
+
+def test_label_name_same_line():
+    assert _names("Nama : Budi Santoso, SE\nNIK : -") == ["Budi Santoso, SE"]
+    assert _names("Nama Lengkap: Siti Aminah") == ["Siti Aminah"]
+    assert _names("  Atas Nama : Rahmat Hidayat ") == ["Rahmat Hidayat"]
+    assert _names("NAMA AYAH ; Joko Widodo") == ["Joko Widodo"]
+
+
+def test_label_name_source_regex():
+    f = [x for x in find_patterns("Nama : Budi Santoso") if x.kind == Kind.NAME_CITIZEN]
+    assert f[0].source == "regex"
+
+
+def test_label_name_column_layout():
+    text = "Nama\n:\nBudi Santoso\nNIP\n:\n197001012000031001"
+    assert _names(text) == ["Budi Santoso"]
+
+
+def test_label_name_column_rejects_label_or_long():
+    assert _names("Nama\n:\nNIP") == []
+    assert _names("Nama\n:\nsatu dua tiga empat lima enam tujuh") == []
+
+
+def test_label_name_negatives():
+    assert _names("Nama Barang : Laptop") == []
+    assert _names("Nama :\nNIK : 1") == []
+    assert _names("Nama : :") == []
+    assert _names("Dengan Nama : Budi") == []
+
+
+def test_letterhead_email_not_flagged():
+    text = "Email: dinas@contohkota.go.id Web: dinas.contohkota.go.id\nEmail : budi.santoso@mail.com"
+    emails = [f.text for f in find_patterns(text) if f.kind == Kind.EMAIL]
+    assert emails == ["budi.santoso@mail.com"]
+
+
+def test_personal_email_with_label_only_still_flagged():
+    assert [f.kind for f in find_patterns("E-mail: siti@contoh.id")] == [Kind.EMAIL]
+
+
+# ---- review: gaps, list markers, letterhead block ----
+_FILLER = "Surat Keterangan\nNomor 1\nPerihal X\nLampiran -\nKepada Yth\nDi tempat\n"
+
+
+def test_label_name_stops_at_gap_and_next_label():
+    text = "Nama : Budi Santoso      NIK : 6474015203880002"
+    assert _kinds(text) == [(Kind.NAME_CITIZEN, "Budi Santoso"),
+                            (Kind.NIK, "6474015203880002")]
+    assert _names("Nama : Budi Santoso\tNIP : -") == ["Budi Santoso"]
+    assert _names("Nama : Budi Santoso Tempat Lahir : Bontang") == ["Budi Santoso"]
+    assert _names("Nama : Budi Santoso NIK: 1") == ["Budi Santoso"]
+
+
+def test_label_name_list_markers():
+    assert _names("1. Nama Lengkap : Budi Santoso") == ["Budi Santoso"]
+    assert _names("a. Nama : Siti Aminah") == ["Siti Aminah"]
+    assert _names("2) Nama\n:\nSiti Aminah") == ["Siti Aminah"]
+
+
+def test_personal_email_with_telp_below_letterhead_kept():
+    text = _FILLER + "Email: budi@gmail.com Telp 0812345678"
+    assert (Kind.EMAIL, "budi@gmail.com") in _kinds(text)
+
+
+def test_personal_address_with_telp_below_letterhead_kept():
+    text = _FILLER + "Alamat : Jl. Mawar No. 5 RT 02 Telp rumah 081234567890"
+    assert any(k == Kind.ADDRESS and t.startswith("Jl. Mawar") for k, t in _kinds(text))

@@ -397,3 +397,26 @@ def test_names_not_auto_detected(db, store, make_pdf):
     found = [f for p in json.loads(doc.findings_json) for f in p]
     assert not [f for f in found if f["kind"].startswith("NAME_")]
     assert not any("Siti Rahmawati" in f["text"] for f in found)
+
+
+def test_job_versi_applies_areas(db, store, make_pdf):
+    import pymupdf as fitz
+    from digitadlp.app.models import AreaRedaction
+    src = make_pdf("Judul\nKOTAKHITAM rahasia\nPenutup")
+    doc = _doc(db, store, src)
+    _run(db, store, JobKind.DETEKSI, doc)
+    p = fitz.open(src)[0]
+    r = p.search_for("KOTAKHITAM")[0]
+    W, H = p.rect.width, p.rect.height
+    db.add(AreaRedaction(document_id=doc.id, page=0, author_id=doc.owner_id,
+                         x0=(r.x0 - 2) / W, y0=(r.y0 - 2) / H,
+                         x1=(r.x1 + 2) / W, y1=(r.y1 + 2) / H))
+    enqueue(db, JobKind.VERSI, doc)
+    db.commit()
+    assert run_pending(lambda: _Ctx(db), store) == 1
+    db.refresh(doc)
+    assert doc.status == Status.DISETUJUI
+    for v, present in (("publik", False), ("internal", False), ("rahasia", True)):
+        text = fitz.open("pdf", store.get(doc.id, f"{v}.pdf"))[0].get_text()
+        assert ("KOTAKHITAM" in text) is present
+        assert "Penutup" in text

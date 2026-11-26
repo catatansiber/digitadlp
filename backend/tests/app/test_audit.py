@@ -52,4 +52,4 @@ def test_record_detail_too_long(db, user):
 
 
 def test_actions_complete():
-    assert len(ACTIONS) == 18
+    assert len(ACTIONS) == 21
