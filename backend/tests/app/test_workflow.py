@@ -5,9 +5,6 @@ from sqlalchemy import select
 from digitadlp.app.jobs import run_pending
 from digitadlp.app.main import create_app
 from digitadlp.app.models import AuditEvent, Base, Correction, Document, Role, Status
-from digitadlp.app.processing import Engine
-from digitadlp.detect.employees import EmployeeDirectory
-from digitadlp.detect.ner import FakeNer
 from digitadlp.models import Kind
 
 from .conftest import make_user
@@ -18,8 +15,7 @@ TEXT = f"Pemohon: Siti Rahmawati\nNIK {NIK}\nDisampaikan oleh Bu Rina"
 
 @pytest.fixture
 def wapp(app_settings):
-    engine = Engine(FakeNer({"Siti Rahmawati": Kind.NAME_CITIZEN}), EmployeeDirectory(set()))
-    app = create_app(app_settings, engine)
+    app = create_app(app_settings)
     Base.metadata.create_all(app.state.db_engine)
     yield app
     app.state.db_engine.dispose()
@@ -49,7 +45,7 @@ def client_as(wapp):
 @pytest.fixture
 def work(wapp):
     def _run():
-        return run_pending(wapp.state.session_factory, wapp.state.store, wapp.state.engine)
+        return run_pending(wapp.state.session_factory, wapp.state.store)
     return _run
 
 

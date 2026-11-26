@@ -1,13 +1,11 @@
-"""Endpoint Admin: unit, pengguna, daftar pegawai, aturan label, audit."""
-import io
+"""Endpoint Admin: unit, pengguna, aturan label, audit."""
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ...detect.employees import EmployeeDirectory
 from ...models import Finding, Kind, Label
 from ...policy import default_label_for
 from ..audit import record
@@ -19,8 +17,6 @@ router = APIRouter(prefix="/api/admin", tags=["admin"],
                    dependencies=[Depends(require_role(Role.ADMIN))])
 admin_user = require_role(Role.ADMIN)
 
-EMPLOYEES_BLOB = "employees.xlsx"
-MAX_XLSX = 10 * 1024 * 1024
 MIN_PASSWORD = 10
 MSG_PASSWORD = f"Kata sandi minimal {MIN_PASSWORD} karakter."
 MSG_UNIT_EXISTS = "Unit kerja sudah ada."
@@ -28,9 +24,6 @@ MSG_UNIT_MISSING = "Unit kerja tidak ditemukan."
 MSG_USER_EXISTS = "Nama pengguna sudah dipakai."
 MSG_USER_MISSING = "Pengguna tidak ditemukan."
 MSG_SELF = "Admin tidak bisa menonaktifkan atau menurunkan peran akunnya sendiri."
-MSG_XLSX_EXT = "Format file tidak didukung. Gunakan .xlsx."
-MSG_XLSX_SIZE = "Ukuran file melebihi batas 10 MB."
-MSG_XLSX_BAD = "File daftar pegawai tidak bisa dibaca. Gunakan .xlsx dengan kolom Nama."
 MSG_RULES = "Aturan label tidak valid."
 
 
@@ -180,35 +173,6 @@ def patch_user(user_id: str, body: UserPatch, request: Request, actor: User = De
     db.commit()
     db.refresh(user)
     return _user_out(user)
-
-
-# ---- employees -------------------------------------------------------------
-
-def load_directory(data: bytes) -> EmployeeDirectory:
-    return EmployeeDirectory.from_xlsx(io.BytesIO(data))
-
-
-@router.post("/employees")
-async def import_employees(request: Request, file: UploadFile = File(...),
-                           actor: User = Depends(admin_user), db: Session = Depends(get_db)):
-    if not (file.filename or "").lower().endswith(".xlsx"):
-        raise HTTPException(415, MSG_XLSX_EXT)
-    data = await file.read(MAX_XLSX + 1)
-    if len(data) > MAX_XLSX:
-        raise HTTPException(413, MSG_XLSX_SIZE)
-    # Parse di memori dulu: file buruk tidak mengganti daftar yang berlaku.
-    try:
-        directory = load_directory(data)
-    except Exception:  # noqa: BLE001 - openpyxl melempar berbagai tipe
-        raise HTTPException(422, MSG_XLSX_BAD) from None
-    if directory.name_count == 0:
-        raise HTTPException(422, MSG_XLSX_BAD)
-    request.app.state.store.put_blob(EMPLOYEES_BLOB, data)
-    request.app.state.engine.set_directory(directory)
-    counts = {"names": directory.name_count, "nips": directory.nip_count}
-    _audit(db, actor, "impor_pegawai", f"nama={counts['names']} nip={counts['nips']}")
-    db.commit()
-    return counts
 
 
 # ---- label rules -----------------------------------------------------------

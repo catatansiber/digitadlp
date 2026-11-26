@@ -16,11 +16,11 @@ from ..redact.pdf import DocumentError
 from .config import Settings
 from .models import Document, Job, JobKind, JobState, Status, new_id, utcnow
 from .processing import (
-    Engine, Touch, apply_deteksi, compute_deteksi, render_versi, store_versi,
+    Touch, apply_deteksi, compute_deteksi, render_versi, store_versi,
 )
 from .storage import FileStore
 
-__all__ = ["Engine", "Worker", "claim", "heartbeat", "enqueue", "run_job", "run_pending"]
+__all__ = ["Worker", "claim", "heartbeat", "enqueue", "run_job", "run_pending"]
 
 log = logging.getLogger("digitadlp.jobs")
 
@@ -148,7 +148,7 @@ def _finalize(db, job_id, token, revision, doc_id, state, code, apply) -> bool:
 
 
 def run_job(
-    db: Session, store: FileStore, engine: Engine, job: Job, touch: Touch | None = None
+    db: Session, store: FileStore, job: Job, touch: Touch | None = None
 ) -> None:
     job_id, kind = job.id, JobKind(job.kind)
     token, revision, doc_id = job.claim_token, job.revision, job.document_id
@@ -163,13 +163,13 @@ def run_job(
             return
         db.rollback()  # jangan tahan kunci selama pemrosesan panjang
         if kind == JobKind.DETEKSI:
-            result = compute_deteksi(db, store, engine, doc, touch)
+            result = compute_deteksi(db, store, doc, touch)
             db.rollback()
             ok = _finalize(db, job_id, token, revision, doc_id, JobState.SELESAI, None,
                            lambda d: apply_deteksi(db, d, result))
         else:
             with store.scratch_dir() as tmp:
-                files = render_versi(db, store, engine, doc, tmp, touch)
+                files = render_versi(db, store, doc, tmp, touch)
                 db.rollback()
                 ok = _finalize(db, job_id, token, revision, doc_id, JobState.SELESAI, None,
                                lambda d: store_versi(store, d, files))
@@ -201,7 +201,7 @@ def run_job(
 
 
 def run_pending(
-    db_factory: Callable[[], Session], store: FileStore, engine: Engine,
+    db_factory: Callable[[], Session], store: FileStore,
     stale_minutes: int = 30,
 ) -> int:
     """Jalankan semua job yang bisa diklaim secara sinkron. Mengembalikan jumlahnya."""
@@ -211,16 +211,15 @@ def run_pending(
             job = claim(db, stale_minutes)
             if job is None:
                 return n
-            run_job(db, store, engine, job)
+            run_job(db, store, job)
             n += 1
 
 
 class Worker:
-    def __init__(self, session_factory, store: FileStore, engine: Engine,
+    def __init__(self, session_factory, store: FileStore,
                  settings: Settings, interval: float = 1.0):
         self._factory = session_factory
         self._store = store
-        self._engine = engine
         self._stale = settings.job_stale_minutes
         self._interval = interval
         self._stop = threading.Event()
@@ -246,7 +245,7 @@ class Worker:
                 with self._factory() as db:
                     job = claim(db, self._stale)
                     if job is not None:
-                        run_job(db, self._store, self._engine, job)
+                        run_job(db, self._store, job)
                         ran = True
             except Exception as exc:  # noqa: BLE001
                 log.error("worker galat exc=%s", type(exc).__name__)

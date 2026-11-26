@@ -36,12 +36,7 @@ def test_cookie_secure_when_enabled(app_settings, app_db):
     from digitadlp.app.main import create_app
     from digitadlp.app.models import Base
 
-    from digitadlp.app.processing import Engine
-    from digitadlp.detect.employees import EmployeeDirectory
-    from digitadlp.detect.ner import FakeNer
-
-    app = create_app(replace(app_settings, cookie_secure=True),
-                     Engine(FakeNer({}), EmployeeDirectory(set())))
+    app = create_app(replace(app_settings, cookie_secure=True))
     Base.metadata.create_all(app.state.db_engine)
     with app.state.session_factory() as s:
         make_user(s, "budi")

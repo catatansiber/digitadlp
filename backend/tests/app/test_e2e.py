@@ -9,9 +9,6 @@ from fastapi.testclient import TestClient
 from digitadlp.app import workflow
 from digitadlp.app.main import create_app
 from digitadlp.app.models import Base, Document, Status
-from digitadlp.app.processing import Engine
-from digitadlp.detect.employees import EmployeeDirectory
-from digitadlp.detect.ner import FakeNer
 
 from .conftest import make_user
 
@@ -108,7 +105,7 @@ def test_validation_error_does_not_echo_input(up):
 def test_lifespan_starts_and_stops_worker(app_settings, tmp_path, make_pdf):
     from dataclasses import replace
     s = replace(app_settings, run_worker=True, database_url=f"sqlite:///{tmp_path}/w.db")
-    app = create_app(s, Engine(FakeNer({}), EmployeeDirectory(set())))
+    app = create_app(s)
     Base.metadata.create_all(app.state.db_engine)
     with app.state.session_factory() as db:
         make_user(db, "up")

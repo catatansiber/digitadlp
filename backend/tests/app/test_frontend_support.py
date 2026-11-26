@@ -7,9 +7,6 @@ from sqlalchemy import select
 from digitadlp.app.jobs import run_pending
 from digitadlp.app.main import create_app
 from digitadlp.app.models import AuditEvent, Base, Role
-from digitadlp.app.processing import Engine
-from digitadlp.detect.employees import EmployeeDirectory
-from digitadlp.detect.ner import FakeNer
 
 from .conftest import make_user
 
@@ -19,7 +16,7 @@ INDEX = "<!doctype html><title>DigitaDLP</title><div id=root></div>"
 
 
 def _mk(settings):
-    app = create_app(settings, Engine(FakeNer({}), EmployeeDirectory(set())))
+    app = create_app(settings)
     Base.metadata.create_all(app.state.db_engine)
     return app
 
@@ -67,7 +64,7 @@ def ready(mk_client, app, make_pdf):
     r = up.post("/api/documents", files={"file": ("s.pdf", make_pdf(TEXT).read_bytes(),
                                                   "application/pdf")})
     assert r.status_code == 201, r.text
-    run_pending(app.state.session_factory, app.state.store, app.state.engine)
+    run_pending(app.state.session_factory, app.state.store)
     return up, r.json()["id"]
 
 
